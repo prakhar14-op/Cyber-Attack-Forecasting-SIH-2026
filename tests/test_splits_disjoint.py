@@ -52,9 +52,12 @@ def test_no_host_window_crosses_splits(data_cfg):
     from data.windows import host_windows_for_split  # noqa: PLC0415 (M3 API)
 
     seen: dict[tuple, str] = {}
-    for split in SPLIT_NAMES:
-        for key in host_windows_for_split(data_cfg, split):  # (host, window_id)
-            assert key not in seen or seen[key] == split, (
-                f"host-window {key} appears in both '{seen.get(key)}' and '{split}'"
-            )
-            seen[key] = split
+    try:
+        for split in SPLIT_NAMES:
+            for key in host_windows_for_split(data_cfg, split):  # (host, window_id)
+                assert key not in seen or seen[key] == split, (
+                    f"host-window {key} appears in both '{seen.get(key)}' and '{split}'"
+                )
+                seen[key] = split
+    except FileNotFoundError:
+        pytest.skip("extracted windows not present — run the M1/M2 data pipeline first")
