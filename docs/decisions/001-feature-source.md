@@ -1,6 +1,10 @@
-# 001 — Feature source for CIC-IDS-2018 days (M1.4) — **AWAITING SIGN-OFF**
+# 001 — Feature source for CIC-IDS-2018 days (M1.4) — **APPROVED**
 
-**Status: proposed 2026-09-05, not yet approved. 1.5–1.7 are blocked on this.**
+**Status: proposed 2026-09-05; approved 2026-09-05 (option (c), 4-day set) via the reviewed
+execution plan.** Consequence recorded at approval: task 1.6 (train-only scaler) resequences to
+the end of M2, because under (c) the flow features it normalises come from our own PCAP
+extractor rather than from the published CSVs. `m1-flow-features` therefore tags after the
+scaler lands, immediately before `m2-packet-features`.
 
 ## Problem
 

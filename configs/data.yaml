@@ -5,7 +5,9 @@
 seed: 1337
 
 paths:
-  raw_dir: data/raw                 # gitignored; filled by data/download_cic.sh
+  # Raw captures live OUTSIDE the repo (and outside OneDrive sync — tens of GB).
+  # Absolute on purpose; refetchable at any time, safe to delete.
+  raw_dir: C:/sih26_data/raw
   interim_dir: data/interim
   processed_dir: data/processed
   artifacts_dir: artifacts          # persisted scalers/encoders live next to the weights
@@ -17,12 +19,37 @@ paths:
 dataset:
   name: cse-cic-ids2018
   s3_bucket: s3://cse-cic-ids2018
+  s3_https_base: https://cse-cic-ids2018.s3.ca-central-1.amazonaws.com
   s3_prefix: "Processed Traffic Data for ML Algorithms"
-  # Which days ship into the pipeline is the M1.4 decision task
-  # (docs/decisions/001-feature-source.md). Empty until that decision is taken.
-  # Entry shape: {date: "2018-02-20", csv: "<processed CSV filename in the bucket>"}
-  # (filenames are not derivable from dates — the bucket has typos like "Thuesday").
-  days: []
+  pcap_prefix: "Original Network Traffic and Log data"
+  # Day set fixed by docs/decisions/001-feature-source.md (approved 2026-09-05).
+  # Flow AND packet features for these days come from our own extractor over
+  # selectively fetched per-host pcap members — never from the published CSVs
+  # (feature parity across splits). 20-02 is fixture-only, not a model day.
+  # (csv filenames are not derivable from dates — the bucket has typos like "Thuesday".)
+  days:
+    - date: "2018-02-14"
+      csv: Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv
+      pcap_dir: Wednesday-14-02-2018
+      pcap_archive: pcap.zip
+    - date: "2018-02-16"
+      csv: Friday-16-02-2018_TrafficForML_CICFlowMeter.csv
+      pcap_dir: Friday-16-02-2018
+      pcap_archive: pcap.zip
+    - date: "2018-02-28"
+      csv: Wednesday-28-02-2018_TrafficForML_CICFlowMeter.csv
+      pcap_dir: Wednesday-28-02-2018
+      pcap_archive: pcap.zip
+    - date: "2018-03-02"
+      csv: Friday-02-03-2018_TrafficForML_CICFlowMeter.csv
+      pcap_dir: Friday-02-03-2018
+      pcap_archive: pcap.zip
+
+  # Selective per-host fetch (decision 001): every member matching a timeline
+  # attacker/victim IP, plus this many seed-sampled benign hosts per day.
+  benign_hosts_per_day: 30
+  host_sample_seed: 1337
+  timeline: data/attack_timeline.yaml
 
 windows:
   window_seconds: 15
@@ -79,6 +106,12 @@ anonymisation:
   per_epoch_permutation: true       # re-permute node ids every epoch (anti-memorisation)
   node_features: role_only          # internal/external, /24 bucket, server-like port profile
   heldout_attacker_ip_eval: false   # M1.7 evaluation mode switch
+  internal_networks:                # the CIC testbed + RFC1918 space
+    - 172.31.0.0/16
+    - 10.0.0.0/8
+    - 192.168.0.0/16
+  n_net24_buckets: 256
+  server_ports: [20, 21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 8080]
 
 packet_features:
   # Output keyed on (src_ip, window_id); joins onto flow features (M2).
@@ -101,4 +134,10 @@ packet_features:
     - port_entropy
     - retransmission_count
   payload_hist_bin_edges: [0, 64, 128, 256, 512, 1024, 1460, 8192]
-  retransmission_backend: tshark    # tshark | scapy (must agree on the fixture)
+  retransmission_backend: scapy     # tshark | scapy (must agree on the fixture; tshark
+                                    # path activates once Wireshark is installed - M2.2)
+  retrans_track_per_flow: 4096      # per-flow seq cache size for the scapy heuristic
+
+flows:
+  timeout_seconds: 120              # idle gap that splits a 5-tuple into a new flow
+  missing_init_win: -1              # value when no SYN / SYN-ACK window was seen

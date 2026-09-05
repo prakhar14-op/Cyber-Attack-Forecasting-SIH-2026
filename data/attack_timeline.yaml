@@ -1,0 +1,83 @@
+# UNB CSE-CIC-IDS2018 attack timeline — the four model days (decision 001).
+# Source: Table 2, https://www.unb.ca/cic/datasets/ids-2018.html (verified 2026-09-05).
+# Times are capture-local (ADT), format HH:MM, on the given date.
+#
+# attacker/victim entries list every known address form: the testbed's internal
+# 172.31.x.x address and, where UNB lists one, the NAT "valid IP". Host selection
+# (data/zip_fetch.py) matches pcap members on ANY of these; stage labelling
+# (data/timeline_labels.py, M3) uses the windows they transmit in.
+#
+# `stage` is the provisional kill-chain stage for windows inside the interval —
+# finalised (with argument) in docs/stage_mapping.md at M3. Two-phase attacks
+# carry per-interval stages.
+
+days:
+  - date: "2018-02-14"
+    attacks:
+      - name: FTP-BruteForce
+        stage: initial_access
+        start: "10:32"
+        end: "12:09"
+        attacker_ips: ["172.31.70.4", "18.221.219.4"]
+        victim_ips: ["172.31.69.25", "18.217.21.148"]
+      - name: SSH-Bruteforce
+        stage: initial_access
+        start: "14:01"
+        end: "15:31"
+        attacker_ips: ["172.31.70.6", "13.58.98.64"]
+        victim_ips: ["172.31.69.25", "18.217.21.148"]
+
+  - date: "2018-02-16"
+    attacks:
+      - name: DoS-SlowHTTPTest
+        stage: impact
+        start: "10:12"
+        end: "11:08"
+        attacker_ips: ["172.31.70.23", "13.59.126.31"]
+        victim_ips: ["172.31.69.25", "18.217.21.148"]
+      - name: DoS-Hulk
+        stage: impact
+        start: "13:45"
+        end: "14:19"
+        attacker_ips: ["172.31.70.16", "18.219.193.20"]
+        victim_ips: ["172.31.69.25", "18.217.21.148"]
+
+  - date: "2018-02-28"
+    attacks:
+      # CIC scenario: malicious document -> reverse shell on the victim, then
+      # internal scanning FROM the victim. External control = c2 on the victim
+      # host; the in-interval internal scan windows are candidates for recon at
+      # M3 labelling time (per-window, only if the host transmits).
+      - name: Infiltration (session 1)
+        stage: c2
+        start: "10:50"
+        end: "12:05"
+        attacker_ips: ["13.58.225.34"]
+        victim_ips: ["172.31.69.24", "18.221.148.137"]
+      - name: Infiltration (session 2)
+        stage: c2
+        start: "13:42"
+        end: "14:40"
+        attacker_ips: ["13.58.225.34"]
+        victim_ips: ["172.31.69.24", "18.221.148.137"]
+
+  - date: "2018-03-02"
+    attacks:
+      - name: Bot (session 1)
+        stage: c2
+        start: "10:11"
+        end: "11:34"
+        attacker_ips: ["18.219.211.138"]
+        victim_ips:
+          ["172.31.69.23", "172.31.69.17", "172.31.69.14", "172.31.69.12",
+           "172.31.69.10", "172.31.69.8", "172.31.69.6", "172.31.69.26",
+           "172.31.69.29", "172.31.69.30"]
+      - name: Bot (session 2)
+        stage: c2
+        start: "14:24"
+        end: "15:55"
+        attacker_ips: ["18.219.211.138"]
+        victim_ips:
+          ["172.31.69.23", "172.31.69.17", "172.31.69.14", "172.31.69.12",
+           "172.31.69.10", "172.31.69.8", "172.31.69.6", "172.31.69.26",
+           "172.31.69.29", "172.31.69.30"]
