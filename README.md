@@ -22,7 +22,8 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M2 packet features | done (`m2-packet-features`) — one streaming extractor for flow **and** packet features over the 4 days; tshark retransmission backend with scapy fallback |
 | M3 windows + stage labels | done (`m3-windows-labels`) — 30 window-bounded features; critical leakage caught by audit + fixed ([decision 003](docs/decisions/003-window-feature-leakage-fix.md)) |
 | M4 eval harness + baselines | done — LR/XGBoost/LSTM, lead-time-at-fixed-FPR harness; **first demoable point** (see Results) |
-| M5–M7 TGN → GRAFT → RSSM | not started |
+| M5 TGN | done (`m5-tgn`) — beats XGBoost cross-family at horizon 0 (0.954 AUROC); sage fallback deferred until its stop-condition trigger |
+| M6–M7 GRAFT → RSSM | not started |
 | M8–M12 engine, ledger, app, capture, deliverables | not started |
 
 ## Results
@@ -37,6 +38,7 @@ generalisation** test — see [docs/benchmark_protocol.md](docs/benchmark_protoc
 
 | model | F1 | precision | recall | AUROC | ECE | lead median (s) | episodes | alerts/day |
 |---|---|---|---|---|---|---|---|---|
+| **tgn + linear head** | **0.565** | 0.451 | **0.754** | **0.954** | 0.033 | 5038 | 2/2 | 661 |
 | xgb | 0.309 | 0.295 | 0.325 | 0.895 | 0.021 | 5148 | 2/2 | 435 |
 | lstm | 0.016 | 0.024 | 0.012 | 0.564 | 0.023 | 4202 | 2/2 | 196 |
 | lr (graded) | 0.001 | 0.002 | 0.001 | 0.537 | 0.026 | 0 | 0/2 | 206 |
@@ -45,8 +47,13 @@ Reading: the **class-weighted logistic regression** (the PS-graded baseline) is 
 cross-family — a linear model cannot transfer bruteforce/DoS signatures to bot C2. **XGBoost**
 generalises (0.895 AUROC, both bot episodes caught ~86 min before completion) on behavioural,
 window-bounded features (payload-size distribution, packet counts, TTL — verified *not* an
-identity artefact). The world model (M5–M7) is measured against XGBoost on **lead time at
-forecast horizons k = 4, 8**, not horizon-0 F1. World-model rows are added there.
+identity artefact). The **TGN host encoder (M5)** — temporal-graph memory over anonymised
+hosts, edges timestamped at flow *end* for causality, trained self-supervised on train events
+only — beats XGBoost cross-family (0.954 AUROC, 75% of bot-C2 windows recalled at the same
+FPR budget): temporal host dynamics transfer across families better than static window
+features. Val (the near-silent infiltration day) is much harder for every model — an honest
+asymmetry, not uniform inflation. The full world model (M6–M7) is measured on **lead time at
+forecast horizons k = 4, 8**, not horizon-0 F1.
 
 ## Offline setup
 
