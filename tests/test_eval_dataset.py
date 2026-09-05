@@ -105,8 +105,23 @@ def test_family_days_and_family_derivation(data_cfg):
     assert D.attack_family("Bot (session 1)") == "bot"
 
 
-def test_holdout_family_raises_when_family_absent(data_cfg):
+def test_holdout_family_drops_attack_windows_and_guards(data_cfg):
     import pytest
-    # 'web' has no data here -> holdout must fail loudly, not silently no-op.
+
+    # synthetic labelled frame: 16-02 (dos) attack + benign, 14-02 benign.
+    labelled = pd.DataFrame(
+        {
+            "host": ["a", "a", "b", "b"],
+            "window_id": [1, 2, 3, 4],
+            "window_start": [5, 10, 15, 20],
+            "day": ["2018-02-16", "2018-02-16", "2018-02-16", "2018-02-14"],
+            "stage": ["impact", "benign", "impact", "benign"],
+        }
+    )
+    kept = D.drop_holdout_family(data_cfg, labelled, "dos", "train")
+    assert (kept["stage"] == "impact").sum() == 0, "dos attack windows dropped"
+    assert (kept["stage"] == "benign").sum() == 2, "benign preserved"
+
+    # a family absent from the frame must fail loudly, never silently no-op.
     with pytest.raises(ValueError, match="removed nothing"):
-        D.assemble_split(data_cfg, "test", horizon=0, fit_scaler=True, holdout_family="web")
+        D.drop_holdout_family(data_cfg, labelled, "bot", "train")

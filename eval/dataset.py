@@ -68,6 +68,25 @@ def family_days(cfg: dict) -> dict[str, set[str]]:
     return out
 
 
+def drop_holdout_family(
+    cfg: dict, labelled: pd.DataFrame, holdout_family: str, split: str
+) -> pd.DataFrame:
+    """Drop a family's ATTACK windows (benign kept) from a labelled frame (M4.6).
+
+    Fails loudly if the family is absent from this frame rather than silently
+    doing nothing — the exact bug this replaces.
+    """
+    drop_days = family_days(cfg).get(holdout_family, set())
+    mask = labelled["day"].isin(drop_days) & (labelled["stage"] != "benign")
+    if not mask.any():
+        raise ValueError(
+            f"holdout_family='{holdout_family}' removed nothing from split "
+            f"'{split}' — it is not a family present here (have "
+            f"{sorted(family_days(cfg))}); holdout applies to train families only"
+        )
+    return labelled.loc[~mask]
+
+
 def _shift_target_by_horizon(
     labelled: pd.DataFrame, horizon: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -114,16 +133,7 @@ def assemble_split(
     labelled = W.build_labelled_split(cfg, split, anonymizer=anonymizer)
 
     if holdout_family:
-        drop_days = family_days(cfg).get(holdout_family, set())
-        before = len(labelled)
-        mask = labelled["day"].isin(drop_days) & (labelled["stage"] != "benign")
-        labelled = labelled.loc[~mask]
-        if before == len(labelled):
-            raise ValueError(
-                f"holdout_family='{holdout_family}' removed nothing from split "
-                f"'{split}' — it is not a family present here (have "
-                f"{sorted(family_days(cfg))}); holdout applies to train families only"
-            )
+        labelled = drop_holdout_family(cfg, labelled, holdout_family, split)
 
     labelled = labelled.sort_values(["host", "window_id"], kind="stable").reset_index(
         drop=True
