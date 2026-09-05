@@ -185,11 +185,12 @@ class RSSM(nn.Module):
             z_t = states["z"].gather(1, idx.expand(-1, 1, states["z"].size(-1))).squeeze(1)
         return self.imagine(h_t, z_t, horizon, sample=sample)
 
+    @torch.no_grad()
     def ensemble_rollout(
         self, e: torch.Tensor, horizon: int, n_samples: int, **kw
     ) -> dict:
         """M7.6: N stochastic rollouts -> mean, band (std) and per-step
-        disagreement (the second OOD signal)."""
+        disagreement (the second OOD signal). Diagnostic only — no autograd."""
         probs = torch.stack(
             [
                 self.filter_then_imagine(e, horizon, sample=True, **kw)["attack_prob"]
@@ -216,10 +217,19 @@ def build_model(cfg: dict, embed_dim: int) -> RSSM:
 # ---------------------------------------------------------------------------
 
 
-def kl_balanced(states: dict, cfg: dict) -> torch.Tensor:
-    """KL(q || p) with Dreamer-style balancing and free bits (tier 2 only)."""
+def kl_balanced(
+    states: dict, cfg: dict, valid: torch.Tensor | None = None
+) -> tuple[torch.Tensor, float]:
+    """KL(q || p) with Dreamer-style balancing and free bits (tier 2 only).
+
+    Returns (loss_term, raw_kl): the loss term is clamped to the free-bits
+    floor; raw_kl is the UNCLAMPED valid-masked mean KL(q||p) — the quantity
+    the posterior-collapse alert must watch (comparing the clamped value to
+    its own floor is dead code, audit finding). Padding positions are excluded
+    from both (their blended posterior equals the prior, diluting the mean).
+    """
     if "post_std" not in states:
-        return torch.zeros((), device=states["h"].device)
+        return torch.zeros((), device=states["h"].device), 0.0
     balance = cfg["loss"]["kl_balance"]
     free = cfg["loss"]["kl_free_bits"]
 
@@ -228,10 +238,17 @@ def kl_balanced(states: dict, cfg: dict) -> torch.Tensor:
     q_sg = torch.distributions.Normal(states["post_mean"].detach(), states["post_std"].detach())
     p_sg = torch.distributions.Normal(states["prior_mean"].detach(), states["prior_std"].detach())
 
-    kl_lhs = torch.distributions.kl_divergence(q_sg, p).sum(-1).mean()
-    kl_rhs = torch.distributions.kl_divergence(q, p_sg).sum(-1).mean()
+    def _masked_mean(kl_bt: torch.Tensor) -> torch.Tensor:
+        if valid is None:
+            return kl_bt.mean()
+        v = valid.to(kl_bt.dtype)
+        return (kl_bt * v).sum() / v.sum().clamp(min=1)
+
+    kl_lhs = _masked_mean(torch.distributions.kl_divergence(q_sg, p).sum(-1))
+    kl_rhs = _masked_mean(torch.distributions.kl_divergence(q, p_sg).sum(-1))
     kl = balance * kl_lhs + (1.0 - balance) * kl_rhs
-    return torch.clamp(kl, min=free)
+    raw_kl = float(_masked_mean(torch.distributions.kl_divergence(q, p).sum(-1)).detach())
+    return torch.clamp(kl, min=free), raw_kl
 
 
 def dynamics_loss(
@@ -243,14 +260,31 @@ def dynamics_loss(
     horizon: int,
     cfg: dict,
     class_weight: torch.Tensor | None = None,
+    delta_t: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Supervised K-step dynamics (M7.4): imagine k=1..K from EVERY position t
-    with the prior, decode, and match the labels at t+k, discounted 0.9^k.
+    with the prior, decode, and match the label EXACTLY k strides ahead,
+    discounted 0.9^k.
 
-    attack/stage/valid are [B, T] aligned to the filtered sequence.
+    Segments hold only a host's PRESENT windows, so row t+k is not always the
+    window k strides after row t (audit finding: training on next-row targets
+    while eval grades wall-clock t+k diverges on gapped hosts). delta_t [B, T]
+    carries the true inter-window gaps; a (t, t+k-row) pair is supervised only
+    when its cumulative gap is exactly k — matching both imagine()'s dt=1
+    steps and the eval convention. Without delta_t, gaps of 1 are assumed.
     """
     b, t = attack.shape
     discount = cfg["loss"]["dynamics_discount"]
+
+    if delta_t is None:
+        pos = torch.arange(t, device=attack.device, dtype=torch.float32).expand(b, t)
+    else:
+        # position of row j = sum of gaps AFTER the segment's first row
+        # (delta_t[:, 0] is the pre-segment gap — irrelevant to intra-segment
+        # differences, so zero it in the cumulative sum).
+        gaps = delta_t.clone().to(torch.float32)
+        gaps[:, 0] = 0.0
+        pos = gaps.cumsum(dim=1)
 
     h = states["h"].reshape(b * t, -1)
     z = states["z"].reshape(b * t, -1)
@@ -265,7 +299,8 @@ def dynamics_loss(
             break
         tgt_a = attack[:, k:]
         tgt_s = stage[:, k:]
-        v = (valid[:, k:] & valid[:, : t - k]).to(attack.dtype)
+        stride_exact = (pos[:, k:] - pos[:, : t - k]) == float(k)
+        v = (valid[:, k:] & valid[:, : t - k] & stride_exact).to(attack.dtype)
         la = F.binary_cross_entropy_with_logits(
             attack_logit[:, : t - k, k - 1], tgt_a, reduction="none",
             pos_weight=class_weight,
@@ -274,7 +309,9 @@ def dynamics_loss(
             stage_logits[:, : t - k, k - 1].movedim(-1, 1), tgt_s, reduction="none"
         )
         w = discount ** k
-        denom = v.sum().clamp(min=1)
+        denom = v.sum()
+        if float(denom) == 0.0:
+            continue  # no stride-exact pairs at this k — skip, don't dilute
         total = total + w * ((la + ls) * v).sum() / denom
         norm = norm + w
     return total / norm.clamp(min=1e-8)

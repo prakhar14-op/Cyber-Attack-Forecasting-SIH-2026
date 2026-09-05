@@ -182,6 +182,13 @@ def snapshot_embeddings(
     encoder.eval()
     encoder.reset()
 
+    if events.num_nodes > encoder.num_nodes:
+        raise ValueError(
+            f"split has {events.num_nodes} hosts but the encoder's memory holds "
+            f"{encoder.num_nodes} — rebuild/train the encoder with enough node "
+            "capacity (a frozen train-sized artifact cannot index new hosts)"
+        )
+
     node_ids = readouts["host"].map(events.node_of_host)
     known = node_ids.notna().to_numpy()
     node_ids = node_ids.fillna(0).to_numpy(dtype=np.int64)

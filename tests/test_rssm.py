@@ -70,10 +70,9 @@ def test_ensemble_rollout_machinery(model, rssm_cfg):
 
     Band WIDENING with horizon is a property of the TRAINED transition (an
     untrained GRU contracts state divergence, so per-step prior noise gives a
-    flat band — measured). The widening assertion therefore lives in the
-    harness world-model run, which computes band(k=1) vs band(k=8) on real
-    data with the trained model, records both in results/*.json, and fails
-    loudly if the band does not widen."""
+    flat band — measured). The widening check therefore lives in the harness
+    world-model run: band(k=1)/band(k=8)/band_widens are recorded in
+    results/world.json and a non-widening band prints a loud WARNING there."""
     torch.manual_seed(1337)
     e = torch.randn(8, 12, EMBED)
     roll = model.ensemble_rollout(e, horizon=8, n_samples=rssm_cfg["rollout"]["ensemble_samples"])
@@ -85,12 +84,24 @@ def test_ensemble_rollout_machinery(model, rssm_cfg):
     )
 
 
-def test_kl_balanced_respects_free_bits(model, rssm_cfg):
+def test_kl_balanced_loss_floor_and_raw_kl_can_expose_collapse(model, rssm_cfg):
     torch.manual_seed(0)
     states = model.filter(torch.randn(4, 6, EMBED), sample=True)
-    kl = R.kl_balanced(states, rssm_cfg)
-    assert torch.isfinite(kl)
-    assert float(kl) >= rssm_cfg["loss"]["kl_free_bits"], "free-bits floor must hold"
+    loss_kl, raw_kl = R.kl_balanced(states, rssm_cfg)
+    assert torch.isfinite(loss_kl)
+    assert float(loss_kl) >= rssm_cfg["loss"]["kl_free_bits"], "loss term is floored"
+
+    # The collapse alert watches the RAW KL, which must be able to drop below
+    # the floor (the audit found alerting on the clamped value was dead code):
+    # posterior == prior -> raw KL == 0 while the loss term still reads the floor.
+    collapsed = {
+        "post_mean": states["prior_mean"], "post_std": states["prior_std"],
+        "prior_mean": states["prior_mean"], "prior_std": states["prior_std"],
+        "h": states["h"],
+    }
+    loss_c, raw_c = R.kl_balanced(collapsed, rssm_cfg)
+    assert raw_c == pytest.approx(0.0, abs=1e-6), "raw KL must expose collapse"
+    assert float(loss_c) >= rssm_cfg["loss"]["kl_free_bits"]
 
 
 def test_dynamics_loss_finite_and_positive(model, rssm_cfg, data_cfg):
@@ -103,3 +114,29 @@ def test_dynamics_loss_finite_and_positive(model, rssm_cfg, data_cfg):
     valid = torch.ones(b, t, dtype=torch.bool)
     loss = R.dynamics_loss(model, states, attack, stage, valid, horizon=4, cfg=rssm_cfg)
     assert torch.isfinite(loss) and float(loss) > 0
+
+
+def test_dynamics_loss_supervises_only_stride_exact_pairs(model, rssm_cfg, data_cfg):
+    """Audit fix: with a gap in the host's timeline, the k-th next ROW is not k
+    strides away and must be excluded from step-k supervision."""
+    torch.manual_seed(0)
+    b, t = 2, 8
+    e = torch.randn(b, t, EMBED)
+    states = model.filter(e, sample=False)
+    attack = torch.zeros(b, t)
+    stage = torch.zeros(b, t, dtype=torch.long)
+    valid = torch.ones(b, t, dtype=torch.bool)
+
+    # A 5-stride gap before position 4: pairs crossing it are not stride-exact.
+    delta = torch.ones(b, t)
+    delta[:, 4] = 5.0
+    gapped = R.dynamics_loss(
+        model, states, attack, stage, valid, horizon=2, cfg=rssm_cfg, delta_t=delta
+    )
+    regular = R.dynamics_loss(
+        model, states, attack, stage, valid, horizon=2, cfg=rssm_cfg,
+        delta_t=torch.ones(b, t),
+    )
+    assert torch.isfinite(gapped) and torch.isfinite(regular)
+    # the gap removes supervised pairs, so the two losses must differ
+    assert float(gapped) != float(regular)

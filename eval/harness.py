@@ -37,10 +37,13 @@ def _flat_scores(model_name, cfg_b, train, evals):
 def _segment_split(split, seg_len):
     """Chunk each host's time-ordered windows into consecutive seg_len segments.
 
-    Returns X [N, seg_len, F], Y [N, seg_len], mask [N, seg_len] (1=real), and
-    flat_index [N, seg_len] mapping each position back to its row in `split`
-    (-1 for padding). The last segment per host is right-aligned/left-padded so
-    the newest window stays last (causal), matching windows.pad_sequence.
+    Returns X [N, seg_len, F], Y [N, seg_len], mask [N, seg_len] (1 = REAL —
+    note callers must invert with ~ for torch's True=PAD src_key_padding_mask),
+    and flat_index [N, seg_len] mapping each position back to its row in
+    `split` (-1 for padding). Segments are RIGHT-padded (pads at the tail,
+    matching windows.pad_sequence): position 0 must always be a real window,
+    because a left-pad makes the first causal query's key set fully masked and
+    its NaN softmax poisons real positions in deeper layers (commit 90db486).
     """
     feat_dim = split.X.shape[1]
     order = np.lexsort((split.window_start, split.host))
@@ -156,16 +159,26 @@ def _tgn_scores(cfg, train_split, eval_splits):
 
 
 def _delta_t_for_segments(split, index_map, stride):
-    """Per-position gap (in strides) to the previous window of the same host.
+    """Per-position gap (in strides) to the host's TRUE previous window.
 
-    index_map [N, T] maps segment positions to split rows (-1 = pad). Pads and
-    first positions get gap 1 (masked in the loss anyway).
+    index_map [N, T] maps segment positions to split rows (-1 = pad). Gaps are
+    computed on the full per-host row series BEFORE chunking, so a
+    segment-initial position carries its real gap to the previous chunk's last
+    window (the audit caught the old fabricated gap=1 there — those positions
+    are real windows, not masked). A host's very first window and pad
+    positions get gap 1.
     """
-    ws = np.where(index_map >= 0, split.window_start[np.clip(index_map, 0, None)], np.nan)
-    delta = np.ones_like(ws, dtype=np.float32)
-    gaps = (ws[:, 1:] - ws[:, :-1]) / stride
-    good = np.isfinite(gaps) & (gaps > 0)
-    delta[:, 1:][good] = gaps[good].astype(np.float32)
+    order = np.lexsort((split.window_start, split.host))
+    row_delta = np.ones(len(split.window_start), dtype=np.float32)
+    ws_sorted = split.window_start[order]
+    same_host = split.host[order][1:] == split.host[order][:-1]
+    gaps = (ws_sorted[1:] - ws_sorted[:-1]) / stride
+    good = same_host & (gaps > 0)
+    row_delta[order[1:][good]] = gaps[good].astype(np.float32)
+
+    delta = np.ones_like(index_map, dtype=np.float32)
+    real = index_map >= 0
+    delta[real] = row_delta[index_map[real]]
     return delta
 
 

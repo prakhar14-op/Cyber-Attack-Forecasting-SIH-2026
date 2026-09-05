@@ -47,6 +47,11 @@ def _load_frozen_stack(cfg, msg_dim):
             "artifacts/tgn_encoder.pt or graft.pt missing — run "
             "`python -m eval.harness --model tgn_graft` (M6.6) first"
         )
+    if cfg_t.get("model", "tgn") != "tgn":
+        raise ValueError(
+            "artifacts were trained with the TGN encoder; configs/train_tgn.yaml "
+            f"now selects '{cfg_t.get('model')}' — refusing a mismatched load"
+        )
     tgn_state = torch.load(tgn_path, weights_only=True)
     num_nodes = tgn_state["memory.memory"].shape[0]
     encoder = T.build_model(cfg_t, num_nodes=num_nodes, msg_dim=msg_dim)
@@ -127,23 +132,25 @@ def _train_rssm(cfg, cfg_r, E, Ys, Ms, Ss, Dt, horizon):
             recon = model.obs_recon(d)
             v = Mt[idx].to(Et.dtype)
             l_recon = (((recon - Et[idx]) ** 2).mean(-1) * v).sum() / v.sum().clamp(min=1)
-            l_kl = R.kl_balanced(states, cfg_r)
+            l_kl, raw_kl = R.kl_balanced(states, cfg_r, valid=Mt[idx])
             l_dyn = R.dynamics_loss(
                 model, states, Yt[idx], St[idx], Mt[idx], horizon, cfg_r,
-                class_weight=class_w,
+                class_weight=class_w, delta_t=Dtt[idx],
             )
             loss = w["w_reconstruction"] * l_recon + w["w_kl"] * l_kl + w["w_dynamics"] * l_dyn
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_r["optim"]["grad_clip"])
             opt.step()
-            tot += float(loss.detach()); kl_sum += float(l_kl.detach()); batches += 1
+            tot += float(loss.detach()); kl_sum += raw_kl; batches += 1
+        # kl_log records the RAW (unclamped, valid-masked) KL — the clamped loss
+        # term can never sit below the floor, so alerting on it was dead code.
         kl_epoch = kl_sum / max(batches, 1)
         kl_log.append(kl_epoch)
-        print(f"rssm epoch {epoch}: loss {tot / max(batches, 1):.4f} kl {kl_epoch:.3f}",
+        print(f"rssm epoch {epoch}: loss {tot / max(batches, 1):.4f} raw_kl {kl_epoch:.3f}",
               flush=True)
         if kl_epoch < cfg_r["loss"]["kl_free_bits"] - 1e-6:
-            print(f"WARNING: KL {kl_epoch:.4f} below free-bits floor — posterior collapse",
-                  flush=True)
+            print(f"WARNING: raw KL {kl_epoch:.4f} below the free-bits floor "
+                  f"({cfg_r['loss']['kl_free_bits']}) — posterior collapse", flush=True)
     return model, kl_log
 
 
@@ -216,14 +223,16 @@ def evaluate_world() -> dict:
     band_k1 = float(roll["band"][:, 0].mean())
     band_k8 = float(roll["band"][:, -1].mean())
     result["band_k1"], result["band_k8"] = band_k1, band_k8
-    print(f"ensemble band: k=1 {band_k1:.4f} -> k={horizon} {band_k8:.4f}", flush=True)
-    if band_k8 <= band_k1:
+    result["band_widens"] = band_k8 > band_k1  # M7.6, recorded — never silent
+    print(f"ensemble band: k=1 {band_k1:.4f} -> k={horizon} {band_k8:.4f} "
+          f"(widens: {result['band_widens']})", flush=True)
+    if not result["band_widens"]:
         print("WARNING: band does NOT widen with horizon on the trained model (M7.6)",
               flush=True)
 
     # per-horizon metrics: targets from horizon-shifted assembly, scores aligned
-    # via (host, window_id).
-    for k in (1, 4, horizon):
+    # via (host, window_id). Horizons come from configs/eval.yaml, never a literal.
+    for k in cfg_eval["horizons"]:
         result["horizons"][k] = {}
         for name, split0 in (("val", val), ("test", test)):
             split_k, _ = D.assemble_split(cfg, name, horizon=k, scaler=scaler)
