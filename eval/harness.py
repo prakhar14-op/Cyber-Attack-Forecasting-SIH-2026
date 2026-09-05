@@ -97,7 +97,11 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
     cfg_b = load_config("baselines")
     set_seed(cfg_b["seed"])
 
-    train, scaler = D.assemble_split(cfg, "train", horizon=0, fit_scaler=True)
+    # Leave-one-attack-family-out (M4.6): the family is removed from TRAIN only,
+    # so the scaler and model never see it; val/test are untouched.
+    train, scaler = D.assemble_split(
+        cfg, "train", horizon=0, fit_scaler=True, holdout_family=holdout_family
+    )
     val, _ = D.assemble_split(cfg, "val", horizon=0, scaler=scaler)
     test, _ = D.assemble_split(cfg, "test", horizon=0, scaler=scaler)
     D.persist_window_scaler(cfg, scaler)

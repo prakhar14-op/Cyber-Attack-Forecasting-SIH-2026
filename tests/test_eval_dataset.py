@@ -93,3 +93,20 @@ def test_lstm_segment_chunking_covers_every_row_once():
     flat = np.zeros(n)
     flat[rows[rows >= 0]] = probs.reshape(-1)[rows >= 0]
     assert np.count_nonzero(flat) >= n - 1
+
+
+def test_family_days_and_family_derivation(data_cfg):
+    fam = D.family_days(data_cfg)
+    assert "2018-02-14" in fam["bruteforce"]
+    assert "2018-02-16" in fam["dos"]
+    assert "2018-03-02" in fam["bot"]
+    assert D.attack_family("DoS-Hulk") == "dos"
+    assert D.attack_family("SSH-Bruteforce") == "bruteforce"
+    assert D.attack_family("Bot (session 1)") == "bot"
+
+
+def test_holdout_family_raises_when_family_absent(data_cfg):
+    import pytest
+    # 'web' has no data here -> holdout must fail loudly, not silently no-op.
+    with pytest.raises(ValueError, match="removed nothing"):
+        D.assemble_split(data_cfg, "test", horizon=0, fit_scaler=True, holdout_family="web")

@@ -42,6 +42,32 @@ def _split_days(cfg: dict, split: str) -> list[str]:
     return [str(d) for d in splits[split]]
 
 
+def attack_family(name: str) -> str:
+    """Coarse attack family from a timeline attack name (for M4.6 holdout)."""
+    n = name.lower()
+    if "brute" in n:
+        return "bruteforce"
+    if n.startswith("dos") or "ddos" in n:
+        return "ddos" if "ddos" in n else "dos"
+    if "infiltration" in n:
+        return "infiltration"
+    if "bot" in n:
+        return "bot"
+    if "web" in n or "xss" in n or "sql" in n:
+        return "web"
+    return "other"
+
+
+def family_days(cfg: dict) -> dict[str, set[str]]:
+    """{family: set of dates on which that family's attacks occur}."""
+    timeline = TL.load_timeline(cfg)
+    out: dict[str, set[str]] = {}
+    for day in timeline["days"]:
+        for atk in day["attacks"]:
+            out.setdefault(attack_family(atk["name"]), set()).add(day["date"])
+    return out
+
+
 def _shift_target_by_horizon(
     labelled: pd.DataFrame, horizon: int
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -69,18 +95,36 @@ def _shift_target_by_horizon(
 
 
 def assemble_split(
-    cfg: dict, split: str, horizon: int = 0, scaler=None, fit_scaler: bool = False
+    cfg: dict, split: str, horizon: int = 0, scaler=None, fit_scaler: bool = False,
+    holdout_family: str | None = None,
 ) -> tuple[Split, object]:
     """Build (Split, scaler) for one split at a forecast horizon.
 
     Pass fit_scaler=True on the train split to fit and return a new scaler;
     pass the returned scaler for val/test. Feature order follows
     windows.feature_columns exactly.
+
+    holdout_family (M4.6): drop this family's ATTACK windows from the split
+    (benign kept), so a model trained on the result never sees that family.
+    Applied by the harness to the TRAIN split only.
     """
     from data.anonymize import Anonymizer
 
     anonymizer = Anonymizer.from_config(cfg)  # env HMAC key; role features only
     labelled = W.build_labelled_split(cfg, split, anonymizer=anonymizer)
+
+    if holdout_family:
+        drop_days = family_days(cfg).get(holdout_family, set())
+        before = len(labelled)
+        mask = labelled["day"].isin(drop_days) & (labelled["stage"] != "benign")
+        labelled = labelled.loc[~mask]
+        if before == len(labelled):
+            raise ValueError(
+                f"holdout_family='{holdout_family}' removed nothing from split "
+                f"'{split}' — it is not a family present here (have "
+                f"{sorted(family_days(cfg))}); holdout applies to train families only"
+            )
+
     labelled = labelled.sort_values(["host", "window_id"], kind="stable").reset_index(
         drop=True
     )
