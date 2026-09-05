@@ -18,8 +18,8 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | Milestone | State |
 |---|---|
 | M0 skeleton, environment, test harness | done (`m0-skeleton`) |
-| M1 flow features + splits | in progress — 1.1–1.3 done; **1.4 feature-source decision awaiting sign-off** ([decision 001](docs/decisions/001-feature-source.md)); 1.5–1.7 blocked on it |
-| M2 packet features | not started |
+| M1 flow features + splits | done (`m1-flow-features`) — loader, canonical schema, day-wise splits, HMAC anonymisation, train-only scaler; [decision 001](docs/decisions/001-feature-source.md) approved (selective per-host PCAP fetch, 4 days) |
+| M2 packet features | done (`m2-packet-features`) — one streaming extractor for flow **and** packet features over the 4 days; tshark retransmission backend with scapy fallback |
 | M3 windows + stage labels | not started |
 | M4 eval harness + baselines | not started |
 | M5–M7 TGN → GRAFT → RSSM | not started |

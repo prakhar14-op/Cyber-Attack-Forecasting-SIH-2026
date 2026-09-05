@@ -51,7 +51,9 @@ fi
 echo "Plan ($BUCKET/$PREFIX -> $RAW_DIR):"
 TOTAL_BYTES=0
 for csv in "${CSVS[@]}"; do
-    LINE="$(aws_cli s3 ls --no-sign-request "$BUCKET/$PREFIX/$csv" | tail -1)"
+    # `|| true` so a not-found object yields an empty LINE and hits the check
+    # below, instead of set -e killing the script with no diagnostic.
+    LINE="$(aws_cli s3 ls --no-sign-request "$BUCKET/$PREFIX/$csv" 2>/dev/null | tail -1 || true)"
     if [ -z "$LINE" ]; then
         echo "  MISSING IN BUCKET: $csv" >&2
         exit 1

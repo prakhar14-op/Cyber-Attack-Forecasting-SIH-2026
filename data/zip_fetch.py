@@ -313,8 +313,10 @@ def main(argv: list[str] | None = None) -> int:
 
         host_dir = raw_dir / day["date"] / "hosts"
         for i, member in enumerate(selected, 1):
-            base = Path(member.name).name
-            out_path = host_dir / (base if base.endswith(".pcap") else base + ".pcap")
+            member_base = Path(member.name).name
+            out_path = host_dir / (
+                member_base if member_base.endswith(".pcap") else member_base + ".pcap"
+            )
             if out_path.exists() and out_path.stat().st_size == member.usize:
                 continue
             print(f"[{day['date']}] ({i}/{len(selected)}) {member.name} "

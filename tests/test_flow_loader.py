@@ -5,6 +5,7 @@ canonical schema — on the committed fixture and on a deliberately corrupted co
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import pandas as pd
 
 from data import flow_features
@@ -77,3 +78,18 @@ def test_deliberately_corrupted_copy_loads_identically(data_cfg, fixture_csv, tm
     for col in ("Flow Byts/s", "Flow Pkts/s"):
         values = pd.to_numeric(raw[col], errors="coerce").to_numpy(dtype=float)
         assert not np.isinf(values).any(), f"Infinity survived load_raw in '{col}'"
+
+
+def test_load_canonical_fails_loudly_when_ip_columns_absent(data_cfg, fixture_csv, tmp_path):
+    """The dataset's dominant real defect (decision 001): every day but 20-02
+    ships a CSV starting at 'Dst Port' with no Src/Dst IP. load_canonical must
+    fail loudly naming the missing column, never silently drop identity."""
+    header = fixture_csv.read_text(encoding="utf-8").splitlines()[0].split(",")
+    keep = [c for c in header if c.strip() not in ("Src IP", "Dst IP")]
+    df = pd.read_csv(fixture_csv, dtype=str)
+    df.columns = [c.strip() for c in df.columns]
+    no_ip = tmp_path / "no_ip_columns.csv"
+    df[keep].to_csv(no_ip, index=False)
+
+    with pytest.raises(ValueError, match="Src IP|Dst IP|PCAP"):
+        flow_features.load_canonical(data_cfg, no_ip)

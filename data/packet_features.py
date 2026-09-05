@@ -123,7 +123,8 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
             ihl = (raw[offset] & 0x0F) * 4
             total_len = struct.unpack_from("!H", raw, offset + 2)[0]
             flags_frag = struct.unpack_from("!H", raw, offset + 6)[0]
-            is_frag = 1 if (flags_frag & 0x2000 or flags_frag & 0x1FFF) else 0
+            frag_offset = flags_frag & 0x1FFF  # in 8-byte units; >0 => not the first fragment
+            is_frag = 1 if (flags_frag & 0x2000 or frag_offset) else 0
             ttl = raw[offset + 8]
             proto = raw[offset + 9]
             src_ip = int.from_bytes(raw[offset + 12 : offset + 16], "big")
@@ -132,11 +133,14 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
             l4 = offset + ihl
             src_port = dst_port = 0
             tcp_win = 0
+            # Default: every IP payload byte is L4 payload. Only the FIRST fragment
+            # (offset 0) carries an L4 header; a later fragment's l4 bytes are
+            # datagram payload, so parsing them fabricates ports/flags/windows.
             payload_len = max(total_len - ihl, 0)
             syn = ack = fin = rst = psh = urg = 0
             retrans = 0
 
-            if proto == _PROTO_TCP and len(raw) >= l4 + 20:
+            if frag_offset == 0 and proto == _PROTO_TCP and len(raw) >= l4 + 20:
                 src_port, dst_port = struct.unpack_from("!HH", raw, l4)
                 seq = struct.unpack_from("!I", raw, l4 + 4)[0]
                 data_off = (raw[l4 + 12] >> 4) * 4
@@ -155,9 +159,11 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
                             (src_ip, dst_ip, src_port, dst_port), seq, payload_len
                         )
                     )
-            elif proto == _PROTO_UDP and len(raw) >= l4 + 8:
+            elif frag_offset == 0 and proto == _PROTO_UDP and len(raw) >= l4 + 8:
                 src_port, dst_port = struct.unpack_from("!HH", raw, l4)
-                payload_len = max(struct.unpack_from("!H", raw, l4 + 4)[0] - 8, 0)
+                # Bytes THIS packet carries (IP total_len), not the UDP length field
+                # which spans the whole datagram and over-counts a fragmented first.
+                payload_len = max(total_len - ihl - 8, 0)
 
             cols["ts"].append(_packet_time(reader, meta))
             cols["src_ip"].append(src_ip)
@@ -279,6 +285,36 @@ def _packet_window_features_reference(packets: pd.DataFrame, cfg: dict) -> pd.Da
             f"{sorted(set(result.columns) ^ expected)}"
         )
     return result
+
+
+def apply_retransmission_backend(
+    features: pd.DataFrame, pcap_path: str | Path, cfg: dict
+) -> tuple[pd.DataFrame, str]:
+    """Honor packet_features.retransmission_backend (BUILD_PLAN M2.2).
+
+    'scapy' (default): keep the inline heuristic counts already in `features`.
+    'tshark': replace retransmission_count with tshark's
+    tcp.analysis.retransmission counts on the same window grid — but only when
+    tshark is installed; otherwise fall back to the scapy counts (the
+    documented pure-scapy fallback). Returns (features, backend_used) so the
+    driver can log which path actually ran.
+    """
+    backend = cfg["packet_features"].get("retransmission_backend", "scapy")
+    if backend == "scapy":
+        return features, "scapy"
+    if backend != "tshark":
+        raise ValueError(f"unknown retransmission_backend: {backend!r} (scapy|tshark)")
+    if find_tshark(cfg) is None:
+        return features, "scapy-fallback"
+    if features.empty:
+        return features, "tshark"
+
+    counts = retransmission_counts_tshark(pcap_path, cfg)
+    merged = features.drop(columns=["retransmission_count"]).merge(
+        counts, on=["src_ip", "window_id"], how="left"
+    )
+    merged["retransmission_count"] = merged["retransmission_count"].fillna(0).astype(int)
+    return merged[features.columns], "tshark"
 
 
 # ---------------------------------------------------------------------------

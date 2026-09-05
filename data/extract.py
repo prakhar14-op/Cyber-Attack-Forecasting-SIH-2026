@@ -61,6 +61,7 @@ def extract_member(pcap_path: Path, out_flows: Path, out_packets: Path, cfg: dic
     flows = pf.assemble_flows(packets, cfg)
     t_flows = time.perf_counter() - started - t_parse
     features = pf.packet_window_features(packets, cfg)
+    features, retrans_backend = pf.apply_retransmission_backend(features, pcap_path, cfg)
     t_feats = time.perf_counter() - started - t_parse - t_flows
 
     out_flows.parent.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,7 @@ def extract_member(pcap_path: Path, out_flows: Path, out_packets: Path, cfg: dic
         "packets": len(packets),
         "flows": len(flows),
         "host_windows": len(features),
+        "retrans_backend": retrans_backend,
         "seconds": time.perf_counter() - started,
         "stage_seconds": (t_parse, t_flows, t_feats),
         "pcap_mb": pcap_path.stat().st_size / 2**20,

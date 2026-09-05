@@ -30,13 +30,25 @@ Exact pinned versions live in `requirements.txt` / `environment.lock.yml`.
 | matplotlib | PSF-based (matplotlib licence) | Evaluation plots |
 | PyYAML | MIT | Config files |
 | jsonschema | MIT | Prediction-object validation |
-| scapy | GPL-2.0-only¹ | Packet-level feature extraction (fallback path) |
-| pyshark | MIT | Packet-level feature extraction (tshark path; requires a local Wireshark/tshark install) |
+| scapy | GPL-2.0-only¹ | Packet parsing + the inline retransmission heuristic (default backend) |
+| pyshark | MIT | Pinned but not currently imported — see ² |
 | pyarrow | Apache-2.0 | Columnar interim storage |
 | tqdm | MPL-2.0 + MIT | Progress bars |
 | pytest | MIT | Test harness |
 
-¹ scapy is GPL-2.0. It is used as an optional, unmodified, dynamically imported
-tool invoked at data-preparation time; it is not linked into or distributed with
-the Apache-2.0 source. If distribution requirements change, drop the scapy
-fallback and require tshark.
+## External tools (not Python packages)
+
+| Tool | Licence | Use |
+|---|---|---|
+| tshark (Wireshark CLI) | GPL-2.0 | Ground-truth retransmission backend (M2.2), invoked as an unmodified external subprocess by `data/packet_features.py` when `retransmission_backend: tshark` and Wireshark is installed. Not bundled. |
+| AWS CLI (awscli) | Apache-2.0 | `data/download_cic.sh` uses it (via `awscli.clidriver`) to list/sync the public CSE-CIC-IDS2018 bucket at data-prep time. Not required at inference/demo time. |
+
+¹ scapy is GPL-2.0. It parses pcap bytes at data-preparation time as an
+unmodified, dynamically imported tool; it is not linked into or distributed with
+the Apache-2.0 source. If distribution requirements change, drop the scapy path
+and require tshark.
+
+² pyshark is retained as a pinned option but no module imports it — the tshark
+backend is a direct subprocess call to the Wireshark CLI (see the table above),
+not the pyshark wrapper. Kept for now as a drop-in alternative; remove if it
+stays unused through M12.

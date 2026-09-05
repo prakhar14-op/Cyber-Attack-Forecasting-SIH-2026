@@ -231,3 +231,76 @@ def test_partitioned_flow_assembly_equals_direct(data_cfg, monkeypatch):
     direct = direct.sort_values(key, kind="stable").reset_index(drop=True)
     partitioned = partitioned.sort_values(key, kind="stable").reset_index(drop=True)
     pd.testing.assert_frame_equal(direct, partitioned, check_dtype=False)
+
+
+def test_non_first_fragment_is_not_parsed_as_l4(tmp_path, data_cfg):
+    """Fix: a fragment with offset > 0 carries datagram payload at the L4
+    position; parsing it fabricates ports/flags/window from payload bytes."""
+    payload = bytes([0x5A]) * 40  # 'Z' bytes would decode to port 23130, phantom flags
+    frag = Ether() / IP(src=SRC, dst=DST, proto=6, flags=0, frag=100) / payload
+    frag.time = BASE_TS
+    table = _extract(tmp_path, [frag], data_cfg)
+
+    assert len(table) == 1
+    row = table.iloc[0]
+    assert row["src_port"] == 0 and row["dst_port"] == 0, "later fragment must not yield ports"
+    assert row["tcp_win"] == 0
+    assert int(row["syn"]) == int(row["ack"]) == int(row["fin"]) == 0, "no phantom flags"
+    assert int(row["is_frag"]) == 1
+    assert int(row["payload_len"]) == 40, "all IP payload bytes count as payload"
+
+    feats = pf.packet_window_features(table, data_cfg)
+    frow = feats[feats["src_ip"] == SRC].iloc[0]
+    assert int(frow["distinct_dst_ports"]) == 1, "phantom port must not inflate distinct ports"
+    assert float(frow["tcp_win_mean"]) == 0.0
+
+
+def test_retransmission_backend_dispatch(tmp_path, data_cfg):
+    """Fix: retransmission_backend is now read. scapy passes counts through;
+    tshark falls back to scapy when Wireshark is absent; junk raises."""
+    packets = [
+        _pkt(BASE_TS, 40000, 80, flags="PA", seq=1, payload=b"x"),
+        _pkt(BASE_TS + 0.1, 40000, 80, flags="PA", seq=1, payload=b"x"),  # retrans
+    ]
+    table = _extract(tmp_path, packets, data_cfg)
+    feats = pf.packet_window_features(table, data_cfg)
+    pcap = tmp_path / "capture.pcap"
+
+    out, backend = pf.apply_retransmission_backend(feats, pcap, data_cfg)
+    assert backend == "scapy"
+    pd.testing.assert_frame_equal(out, feats)
+
+    def with_backend(name):
+        return {**data_cfg, "packet_features": {**data_cfg["packet_features"],
+                                                "retransmission_backend": name}}
+
+    tshark_cfg = with_backend("tshark")
+    _, backend2 = pf.apply_retransmission_backend(feats, pcap, tshark_cfg)
+    assert backend2 in ("tshark", "scapy-fallback")
+    if pf.find_tshark(tshark_cfg) is None:
+        assert backend2 == "scapy-fallback", "no Wireshark -> documented scapy fallback"
+
+    with pytest.raises(ValueError, match="unknown retransmission_backend"):
+        pf.apply_retransmission_backend(feats, pcap, with_backend("bogus"))
+
+
+def test_m24_join_has_no_silent_row_loss(tmp_path, data_cfg):
+    """BUILD_PLAN M2.4 acceptance: an explicit row-count assertion on the
+    flow/packet-window join — every flow's start window resolves to a real
+    packet-side host-window, counted, not merely membership-checked."""
+    packets = [
+        _pkt(BASE_TS + i, 44000 + i, 80 + i, flags="S", seq=i) for i in range(0, 40, 7)
+    ]
+    table = _extract(tmp_path, packets, data_cfg)
+    flows = pf.assemble_flows(table, data_cfg)
+    feats = pf.packet_window_features(table, data_cfg)
+
+    packet_keys = set(zip(feats["src_ip"], feats["window_id"]))
+    flow_start = flows["timestamp"].map(pd.Timestamp.timestamp)
+    start_windows = pf.window_ids_for(flow_start, data_cfg)[-1]  # the flow-start window
+    joined = sum(
+        (src_ip, int(w)) in packet_keys for src_ip, w in zip(flows["src_ip"], start_windows)
+    )
+    assert joined == len(flows), (
+        f"{len(flows) - joined} of {len(flows)} flows lost their packet-side window in the join"
+    )
