@@ -151,6 +151,150 @@ def _tgn_scores(cfg, train_split, eval_splits):
     return scores
 
 
+def _delta_t_for_segments(split, index_map, stride):
+    """Per-position gap (in strides) to the previous window of the same host.
+
+    index_map [N, T] maps segment positions to split rows (-1 = pad). Pads and
+    first positions get gap 1 (masked in the loss anyway).
+    """
+    ws = np.where(index_map >= 0, split.window_start[np.clip(index_map, 0, None)], np.nan)
+    delta = np.ones_like(ws, dtype=np.float32)
+    gaps = (ws[:, 1:] - ws[:, :-1]) / stride
+    good = np.isfinite(gaps) & (gaps > 0)
+    delta[:, 1:][good] = gaps[good].astype(np.float32)
+    return delta
+
+
+def _tgn_graft_scores(cfg, train_split, eval_splits):
+    """M6.6: GRAFT (causal transformer) over TGN embedding sequences, horizon 0.
+
+    TGN is trained exactly as in the M5 row (link-pred, train events only,
+    per-epoch id permutation); its per-(host, window) memory embeddings become
+    GRAFT's input sequences. GRAFT trains with the composite loss (attack +
+    stage + annealed Dirichlet evidential + benign-only reconstruction).
+    Trained weights are persisted to artifacts/ for M7.
+    """
+    import pandas as pd
+    import torch
+
+    from data.anonymize import Anonymizer
+    from data.flow_features import fit_scaler, load_split_flows
+    from models import graft as G
+    from models import losses as L
+    from models import tgn as T
+
+    cfg_t = load_config("train_tgn")
+    cfg_g = load_config("train_graft")
+    set_seed(cfg_g["seed"])
+    anonymizer = Anonymizer.from_config(cfg)
+    msg_scaler = fit_scaler(cfg, split="train")
+    stage_of = {s: i for i, s in enumerate(cfg["stages"])}
+    stride = cfg["windows"]["stride_seconds"]
+    seg_len = cfg["windows"]["max_sequence_windows"]
+
+    # ---- TGN exactly as the M5 row ----
+    train_flows = load_split_flows(cfg, "train")
+    encoder = T.build_model(
+        cfg_t,
+        num_nodes=pd.concat([train_flows["src_ip"], train_flows["dst_ip"]]).nunique(),
+        msg_dim=len(msg_scaler.mean_),
+    )
+    for epoch in range(cfg_t["link_pred"]["epochs"]):
+        events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
+        one = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
+        loss = T.train_link_pred(encoder, events, one)[0]
+        print(f"tgn link-pred epoch {epoch}: loss {loss:.4f}", flush=True)
+
+    def tgn_embeddings(split, split_name):
+        flows = train_flows if split_name == "train" else load_split_flows(cfg, split_name)
+        events = T.build_events(cfg_t, flows, anonymizer, 0, msg_scaler)
+        ro = pd.DataFrame({"host": split.host, "window_start": split.window_start})
+        return T.snapshot_embeddings(encoder, events, ro, cfg_t)
+
+    # ---- segment the train split over TGN embeddings ----
+    emb_train = tgn_embeddings(train_split, "train")
+    from types import SimpleNamespace
+
+    def seg(split, emb):
+        proxy = SimpleNamespace(
+            X=emb, y=split.y, host=split.host, window_start=split.window_start
+        )
+        Xs, Ys, Ms, Is = _segment_split(proxy, seg_len)
+        stage_ids = np.array([stage_of[s] for s in split.stage], dtype=np.int64)
+        Ss = np.where(Is >= 0, stage_ids[np.clip(Is, 0, None)], 0)
+        Dt = _delta_t_for_segments(split, Is, stride)
+        return Xs, Ys, Ms, Is, Ss, Dt
+
+    Xs, Ys, Ms, Is, Ss, Dt = seg(train_split, emb_train)
+    print(f"graft train segments: {Xs.shape}", flush=True)
+
+    model = G.build_model(cfg_g, feature_dim=Xs.shape[2])
+    opt = torch.optim.Adam(
+        model.parameters(), lr=cfg_g["optim"]["lr"],
+        weight_decay=cfg_g["optim"]["weight_decay"],
+    )
+    pos = max(float(Ys[Ms > 0].sum()), 1.0)
+    neg = float(Ms.sum() - pos)
+    class_w = torch.tensor(neg / pos)
+
+    Xt = torch.tensor(Xs); Yt = torch.tensor(Ys, dtype=torch.float32)
+    Mt = torch.tensor(Ms.astype(bool)); St = torch.tensor(Ss); Dtt = torch.tensor(Dt)
+    bs = cfg_g["optim"]["batch_size"]
+    n = Xt.shape[0]
+    anneal_ep = cfg_g["loss"]["evidential_kl_anneal_epochs"]
+    g = torch.Generator().manual_seed(cfg_g["seed"])
+
+    model.train()
+    for epoch in range(cfg_g["optim"]["epochs"]):
+        perm = torch.randperm(n, generator=g)
+        tot = 0.0
+        for i in range(0, n, bs):
+            idx = perm[i : i + bs]
+            opt.zero_grad()
+            out = model(Xt[idx], delta_t=Dtt[idx], padding_mask=~Mt[idx])
+            targets = {
+                "attack": Yt[idx], "stage": St[idx], "features": Xt[idx],
+                "valid": Mt[idx],
+            }
+            loss, _ = L.composite_loss(
+                out, targets, cfg_g, anneal=min(1.0, epoch / anneal_ep),
+                class_weights=class_w,
+            )
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_g["optim"]["grad_clip"])
+            opt.step()
+            tot += float(loss.detach())
+        print(f"graft epoch {epoch}: loss {tot / max(1, n // bs):.4f}", flush=True)
+
+    from configs import resolve_path
+
+    art = resolve_path(cfg["paths"]["artifacts_dir"]); art.mkdir(parents=True, exist_ok=True)
+    torch.save(encoder.state_dict(), art / "tgn_encoder.pt")
+    torch.save(model.state_dict(), art / "graft.pt")
+
+    # ---- score eval splits ----
+    scores = {}
+    model.eval()
+    for name, split in eval_splits.items():
+        emb = tgn_embeddings(split, name)
+        Xs, Ys, Ms, Is, Ss, Dt = seg(split, emb)
+        flat = np.zeros(len(split.y), dtype=float)
+        with torch.no_grad():
+            for i in range(0, Xs.shape[0], bs):
+                sl = slice(i, i + bs)
+                out = model(
+                    torch.tensor(Xs[sl]), delta_t=torch.tensor(Dt[sl]),
+                    padding_mask=~torch.tensor(Ms[sl].astype(bool)),
+                )
+                probs = out["attack_prob"].numpy()
+                rows = Is[sl].reshape(-1)
+                vals = probs.reshape(-1)
+                keep = rows >= 0
+                flat[rows[keep]] = vals[keep]
+        scores[name] = flat
+    return scores
+
+
 def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
     cfg = load_config("data")
     cfg_eval = load_config("eval")
@@ -171,6 +315,8 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
         scores = _lstm_scores(cfg, cfg_b, train, evals)
     elif model_name == "tgn":
         scores = _tgn_scores(cfg, train, evals)
+    elif model_name == "tgn_graft":
+        scores = _tgn_graft_scores(cfg, train, evals)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
 
@@ -218,7 +364,8 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--model", required=True, choices=sorted(baselines.REGISTRY) + ["tgn"]
+        "--model", required=True,
+        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft"],
     )
     parser.add_argument("--holdout-family", default=None)
     args = parser.parse_args(argv)

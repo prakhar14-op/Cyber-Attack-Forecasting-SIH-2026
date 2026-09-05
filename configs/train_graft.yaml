@@ -30,6 +30,6 @@ optim:
   lr: 0.0003
   weight_decay: 0.00001
   batch_size: 64
-  epochs: 50
+  epochs: 8              # CPU-sized (this laptop has no GPU); revisit if underfit
   grad_clip: 1.0
   early_stop_patience: 7

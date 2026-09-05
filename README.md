@@ -13,7 +13,7 @@ completion of the attack, at a fixed false-positive budget.
 
 ## Status
 
-Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: **M0 — skeleton**.
+Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: **M6 — GRAFT encoder** (M0–M5 tagged).
 
 | Milestone | State |
 |---|---|
