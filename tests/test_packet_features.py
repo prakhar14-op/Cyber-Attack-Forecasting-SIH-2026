@@ -123,3 +123,34 @@ def test_flow_and_packet_window_keys_align_with_no_silent_loss(tmp_path, data_cf
             assert (src_ip, int(window_id)) in packet_keys, (
                 f"flow window ({src_ip}, {window_id}) missing on the packet side"
             )
+
+
+def test_scapy_and_tshark_retransmission_counts_agree(tmp_path, data_cfg):
+    """M2.2: both backends must give the same count on the fixture. Skips (loudly)
+    until Wireshark is installed on this machine — never silently substituted."""
+    if pf.find_tshark(data_cfg) is None:
+        pytest.skip("tshark not installed — install Wireshark to run the M2.2 agreement check")
+
+    packets = [
+        _pkt(BASE_TS + 0.0, 40000, 80, flags="PA", seq=1000, payload=b"HELLO"),
+        _pkt(BASE_TS + 0.3, 40000, 80, flags="PA", seq=1000, payload=b"HELLO"),  # retrans
+        _pkt(BASE_TS + 0.6, 40000, 80, flags="PA", seq=1005, payload=b"WORLD"),
+        _pkt(BASE_TS + 0.9, 40001, 443, flags="S", seq=7),
+    ]
+    pcap_dir = tmp_path / "agree"
+    table = _extract(pcap_dir, packets, data_cfg)
+
+    scapy_counts = (
+        pf.packet_window_features(table, data_cfg)
+        .set_index(["src_ip", "window_id"])["retransmission_count"]
+    )
+    tshark_counts = (
+        pf.retransmission_counts_tshark(pcap_dir / "capture.pcap", data_cfg)
+        .set_index(["src_ip", "window_id"])["retransmission_count"]
+    )
+
+    scapy_nonzero = scapy_counts[scapy_counts > 0].sort_index()
+    tshark_nonzero = tshark_counts[tshark_counts > 0].sort_index()
+    assert scapy_nonzero.to_dict() == tshark_nonzero.to_dict(), (
+        "scapy heuristic and tshark disagree on the fixture's retransmissions"
+    )

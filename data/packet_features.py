@@ -279,6 +279,64 @@ def packet_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+def find_tshark(cfg: dict) -> str | None:
+    """Resolve the tshark binary: explicit config path, PATH, default install."""
+    import shutil
+
+    configured = cfg["packet_features"].get("tshark_path")
+    if configured:
+        return configured if Path(configured).exists() else None
+    on_path = shutil.which("tshark")
+    if on_path:
+        return on_path
+    default = Path("C:/Program Files/Wireshark/tshark.exe")
+    return str(default) if default.exists() else None
+
+
+def retransmission_counts_tshark(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
+    """Ground-truth retransmissions per (src_ip, window_id) via tshark (M2.2).
+
+    Uses `tcp.analysis.retransmission` on the same window grid as the scapy
+    path, so the two backends are directly comparable. Raises loudly when
+    tshark is not installed — the scapy heuristic is the documented fallback,
+    never a silent substitute for this function.
+    """
+    import subprocess
+
+    tshark = find_tshark(cfg)
+    if tshark is None:
+        raise RuntimeError(
+            "tshark not found — install Wireshark (or set packet_features.tshark_path) "
+            "to run the M2.2 backend-agreement check"
+        )
+
+    result = subprocess.run(
+        [tshark, "-r", str(pcap_path), "-Y", "tcp.analysis.retransmission",
+         "-T", "fields", "-e", "frame.time_epoch", "-e", "ip.src",
+         "-E", "separator=,"],
+        capture_output=True, text=True, timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"tshark failed on {pcap_path}: {result.stderr.strip()[:500]}")
+
+    rows = []
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(",")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            rows.append((float(parts[0]), parts[1]))
+    events = pd.DataFrame(rows, columns=["ts", "src_ip"])
+    if events.empty:
+        return pd.DataFrame(columns=["src_ip", "window_id", "retransmission_count"])
+
+    exploded = _explode_to_windows(events, cfg)
+    counts = (
+        exploded.groupby(["src_ip", "window_id"]).size()
+        .rename("retransmission_count").reset_index()
+    )
+    counts["window_id"] = counts["window_id"].astype(int)
+    return counts
+
+
 def assemble_flows(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """Group packets into bidirectional flows; emit the canonical 23 columns.
 

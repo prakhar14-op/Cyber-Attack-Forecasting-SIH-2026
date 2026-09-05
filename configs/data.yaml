@@ -137,6 +137,8 @@ packet_features:
   retransmission_backend: scapy     # tshark | scapy (must agree on the fixture; tshark
                                     # path activates once Wireshark is installed - M2.2)
   retrans_track_per_flow: 4096      # per-flow seq cache size for the scapy heuristic
+  tshark_path: null                 # null = auto-discover (PATH, then the default
+                                    # C:/Program Files/Wireshark/tshark.exe)
 
 flows:
   timeout_seconds: 120              # idle gap that splits a 5-tuple into a new flow
