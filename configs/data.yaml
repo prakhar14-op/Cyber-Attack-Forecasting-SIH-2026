@@ -8,8 +8,8 @@ paths:
   # Raw captures live OUTSIDE the repo (and outside OneDrive sync — tens of GB).
   # Absolute on purpose; refetchable at any time, safe to delete.
   raw_dir: C:/sih26_data/raw
-  interim_dir: data/interim
-  processed_dir: data/processed
+  interim_dir: C:/sih26_data/interim
+  processed_dir: C:/sih26_data/processed
   artifacts_dir: artifacts          # persisted scalers/encoders live next to the weights
   scaler: artifacts/scaler.pkl
   feature_names: artifacts/feature_names.json
