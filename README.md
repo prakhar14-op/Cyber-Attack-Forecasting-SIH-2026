@@ -28,7 +28,8 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 
 | M8 engine + explainability | functional — offline predict → SHAP named-feature explanations → MITRE technique → ledger; **8.3 attention-over-windows and 8.7 what-if not yet built** (untagged) |
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
-| M10–M12 app, capture, deliverables | not started |
+| M10 offline app | done (`m10-app`) — Streamlit demo: upload → timeline → named-feature explanations → what-if → ledger verify/tamper → results card; telemetry disabled |
+| M11–M12 lab capture, deliverables | not started |
 
 ## Results
 
@@ -81,6 +82,7 @@ Run the engine on a file, then verify the ledger with no network:
 python -m engine.train_engine                 # fit + persist model, threshold, weight digests
 python -c "from engine import predict; predict.predict_file('tests/fixtures/mini.csv', 'run/')"
 python -m ledger.verify_cli run/audit_chain.jsonl
+streamlit run app/streamlit_app.py          # the offline demo
 ```
 
 ## Layout
