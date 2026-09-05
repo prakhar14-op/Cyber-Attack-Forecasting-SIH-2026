@@ -68,3 +68,8 @@ window-level scaler (M4) fits on the corrected matrix.
   wanted node feature, so it stays, but it is the anti-memorisation weak point (the attacked
   victim subnet is stable across splits). The primary mitigation is the per-epoch node-id
   permutation (M5); revisit if M5/M7 numbers look identity-driven.
+  **Verified empirically at M4:** XGBoost's cross-family generalisation (0.895 test AUROC) is
+  driven by behavioural, window-bounded features — `payload_hist_0` (0.54), `sent_pkts`
+  (0.25), `ttl_mean` (0.05); `net24_bucket` ranks 5th at importance 0.028, not load-bearing.
+  So the strong baseline is not an identity artefact. Kept as a minor feature; if any later
+  model's importance shifts onto it, drop it.

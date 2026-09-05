@@ -181,11 +181,15 @@ def build_host_sequences(window_features: pd.DataFrame, cfg: dict) -> dict[str, 
     return result
 
 
-def build_labelled_split(cfg: dict, split: str) -> pd.DataFrame:
-    """Window features (real hosts) + a 'stage' label column for one split."""
+def build_labelled_split(cfg: dict, split: str, anonymizer=None) -> pd.DataFrame:
+    """Window features (real hosts) + a 'stage' label column for one split.
+
+    Pass an Anonymizer to populate the role features (internal/net24_bucket);
+    hosts stay real (with_pseudonyms=False) so labelling and lead-time work.
+    """
     from data.timeline_labels import label_windows
 
-    wf = build_split_windows(cfg, split)
+    wf = build_split_windows(cfg, split, anonymizer=anonymizer)
     wf["stage"] = label_windows(cfg, wf)
     return wf
 
