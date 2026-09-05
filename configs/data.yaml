@@ -137,9 +137,15 @@ packet_features:
   retransmission_backend: scapy     # tshark | scapy (must agree on the fixture; tshark
                                     # path activates once Wireshark is installed - M2.2)
   retrans_track_per_flow: 4096      # per-flow seq cache size for the scapy heuristic
-  tshark_path: null                 # null = auto-discover (PATH, then the default
-                                    # C:/Program Files/Wireshark/tshark.exe)
+  tshark_path: null                 # null = auto-discover (PATH, then tshark_default_path)
+  tshark_default_path: "C:/Program Files/Wireshark/tshark.exe"  # last-resort install location
 
 flows:
   timeout_seconds: 120              # idle gap that splits a 5-tuple into a new flow
   missing_init_win: -1              # value when no SYN / SYN-ACK window was seen
+  partition_rows: 4000000           # above this packet count, assemble flows per endpoint-pair
+                                    # partition (exact; bounds memory on flood captures)
+
+loader:
+  numeric_adoption_ratio: 0.9       # a column is adopted as numeric only if >= this share of
+                                    # its non-null values parse (header-echo rows parse as NaN)

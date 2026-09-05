@@ -332,7 +332,11 @@ def find_tshark(cfg: dict) -> str | None:
     on_path = shutil.which("tshark")
     if on_path:
         return on_path
-    default = Path("C:/Program Files/Wireshark/tshark.exe")
+    default = Path(
+        cfg["packet_features"].get(
+            "tshark_default_path", "C:/Program Files/Wireshark/tshark.exe"
+        )
+    )
     return str(default) if default.exists() else None
 
 
@@ -494,9 +498,10 @@ def packet_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return result
 
 
-# Partition threshold for flow assembly: pair-partitioned processing keeps the
-# per-partition intermediates bounded on flood captures (tens of millions of
-# packets). Partitioning by endpoint pair is EXACT — a flow never spans pairs.
+# Fallback partition threshold when a caller passes a config without flows.
+# partition_rows (configs/data.yaml carries the real value). Pair-partitioned
+# assembly keeps per-partition intermediates bounded on flood captures;
+# partitioning by endpoint pair is EXACT — a flow never spans pairs.
 _FLOW_PARTITION_ROWS = 4_000_000
 
 
@@ -518,7 +523,8 @@ def assemble_flows(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     pair_lo = np.minimum(a_key, b_key)
     pair_hi = np.maximum(a_key, b_key)
 
-    n_parts = max(1, -(-len(packets) // _FLOW_PARTITION_ROWS))
+    partition_rows = cfg.get("flows", {}).get("partition_rows", _FLOW_PARTITION_ROWS)
+    n_parts = max(1, -(-len(packets) // partition_rows))
     if n_parts == 1:
         out = _assemble_flows_partition(packets, pair_lo, pair_hi, cfg)
     else:

@@ -221,11 +221,12 @@ def test_bin_composed_features_equal_reference_implementation(data_cfg):
     )
 
 
-def test_partitioned_flow_assembly_equals_direct(data_cfg, monkeypatch):
+def test_partitioned_flow_assembly_equals_direct(data_cfg):
     table = _random_packet_table(30_000, seed=11)
     direct = pf.assemble_flows(table, data_cfg)
-    monkeypatch.setattr(pf, "_FLOW_PARTITION_ROWS", 2_000)  # force ~15 partitions
-    partitioned = pf.assemble_flows(table, data_cfg)
+    # force ~15 partitions via config (flows.partition_rows), not a module patch
+    small_parts = {**data_cfg, "flows": {**data_cfg["flows"], "partition_rows": 2_000}}
+    partitioned = pf.assemble_flows(table, small_parts)
 
     key = ["timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "protocol"]
     direct = direct.sort_values(key, kind="stable").reset_index(drop=True)

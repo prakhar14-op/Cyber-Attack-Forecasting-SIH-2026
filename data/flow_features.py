@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# A column is adopted as numeric only if at least this share of its non-null
-# values parse; below that it stays a (stripped) string column. Header-echo rows
-# parse as NaN and are dropped separately, so real numeric columns sit near 1.0.
+# Fallback for the numeric-adoption ratio when a caller passes a config without
+# a loader section (configs/data.yaml carries the real value). A column is
+# adopted as numeric only if at least this share of its non-null values parse.
 _NUMERIC_ADOPTION_RATIO = 0.9
 
 
@@ -49,6 +49,9 @@ def load_raw(cfg: dict, csv_path: str | os.PathLike) -> pd.DataFrame:
     if header_echo.any():
         df = df.loc[~header_echo]
 
+    adoption_ratio = cfg.get("loader", {}).get(
+        "numeric_adoption_ratio", _NUMERIC_ADOPTION_RATIO
+    )
     for col in df.columns:
         # .str.strip() keeps genuine NaN cells as NaN (astype(str) would turn
         # them into the literal string "nan")
@@ -59,7 +62,7 @@ def load_raw(cfg: dict, csv_path: str | os.PathLike) -> pd.DataFrame:
             df[col] = series
             continue
         parsed_ratio = numeric.notna()[non_null].mean()
-        if parsed_ratio >= _NUMERIC_ADOPTION_RATIO:
+        if parsed_ratio >= adoption_ratio:
             df[col] = numeric.replace([np.inf, -np.inf], np.nan)
         else:
             df[col] = series
