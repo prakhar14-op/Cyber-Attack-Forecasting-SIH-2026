@@ -305,3 +305,29 @@ def test_m24_join_has_no_silent_row_loss(tmp_path, data_cfg):
     assert joined == len(flows), (
         f"{len(flows) - joined} of {len(flows)} flows lost their packet-side window in the join"
     )
+
+
+def test_sent_window_features_equal_reference(data_cfg):
+    table = _random_packet_table(50_000)
+    composed = pf.sent_window_features(table, data_cfg)
+    reference = pf._sent_window_features_reference(table, data_cfg)
+    composed = composed[sorted(composed.columns)].reset_index(drop=True)
+    reference = reference[sorted(reference.columns)].reset_index(drop=True)
+    pd.testing.assert_frame_equal(composed, reference, check_dtype=False, rtol=1e-9, atol=1e-9)
+
+
+def test_sent_features_are_window_bounded_not_whole_flow(tmp_path, data_cfg):
+    """The decision-003 fix: a long flow's bytes land in the windows its PACKETS
+    fall in, never summed wholesale into the start window."""
+    # 3 packets from one host, 20 s apart => different (non-overlapping) windows.
+    packets = [
+        _pkt(BASE_TS + 0.0, 40000, 80, flags="PA", seq=1, payload=b"A" * 100),
+        _pkt(BASE_TS + 20.0, 40000, 80, flags="PA", seq=101, payload=b"B" * 100),
+        _pkt(BASE_TS + 40.0, 40000, 80, flags="PA", seq=201, payload=b"C" * 100),
+    ]
+    table = _extract(tmp_path, packets, data_cfg)
+    sent = pf.sent_window_features(table, data_cfg)
+    by_window = sent.groupby("window_id")["sent_bytes"].sum()
+    # no single window may hold all 300 bytes — each packet is bounded to its own windows
+    assert by_window.max() < 300, "a window must not accumulate bytes from packets outside it"
+    assert sent["sent_bytes"].sum() >= 300  # each packet counted in its overlapping windows

@@ -287,6 +287,100 @@ def _packet_window_features_reference(packets: pd.DataFrame, cfg: dict) -> pd.Da
     return result
 
 
+_SENT_FLAGS = ["syn", "ack", "fin", "rst", "psh", "urg"]
+
+
+def _sent_window_features_reference(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """Direct reference for the window-bounded sent-side features (small inputs)."""
+    server_ports = set(cfg["anonymisation"]["server_ports"])
+    keys = ["src_ip", "window_id"]
+    ex = _explode_to_windows(packets, cfg)
+    ex["is_server_src"] = ex["src_port"].isin(server_ports)
+    ex["syn_win"] = ex["tcp_win"].where(ex["syn"] == 1)
+
+    grp = ex.groupby(keys, sort=True)
+    out = pd.DataFrame(index=grp.size().index)
+    out["sent_bytes"] = grp["payload_len"].sum().astype("int64")
+    out["sent_pkts"] = grp.size().astype(int)
+    for flag in _SENT_FLAGS:
+        out[flag] = grp[flag].sum().astype(int)
+    out["syn_win_mean"] = grp["syn_win"].mean().fillna(0.0)
+    out["server_port_ratio"] = grp["is_server_src"].mean()
+    out["distinct_dst_ips"] = grp["dst_ip"].nunique().astype(int)
+
+    result = out.reset_index()
+    result["src_ip"] = ips_to_str(result["src_ip"])
+    result["window_id"] = result["window_id"].astype(int)
+    return result
+
+
+def sent_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """Window-BOUNDED sent-side features per (src_ip, window_id) (decision 003).
+
+    Everything here is a sum/mean/nunique of packets whose OWN timestamp falls
+    in the window — so, unlike whole-flow attribution, no forecast-horizon
+    traffic leaks into window t. Bin-composed for bounded memory on flood
+    captures; a test pins equality to _sent_window_features_reference.
+    """
+    stride = cfg["windows"]["stride_seconds"]
+    n_bins = cfg["windows"]["window_seconds"] // stride
+    server_ports = set(cfg["anonymisation"]["server_ports"])
+    keys = ["src_ip", "bin_id"]
+    wkeys = ["src_ip", "window_id"]
+
+    px = packets[
+        ["ts", "src_ip", "dst_ip", "src_port", "tcp_win", "payload_len", *_SENT_FLAGS]
+    ].copy()
+    px["bin_id"] = np.floor(px["ts"].to_numpy(dtype=float) / stride).astype(np.int64)
+    px["is_server_src"] = px["src_port"].isin(server_ports).astype(np.int64)
+    px["syn_win"] = px["tcp_win"].where(px["syn"] == 1).astype("float64")
+
+    g = px.groupby(keys, sort=True)
+    bins = pd.DataFrame(index=g.size().index)
+    bins["sent_pkts"] = g.size()
+    bins["sent_bytes"] = g["payload_len"].sum()
+    for flag in _SENT_FLAGS:
+        bins[flag] = g[flag].sum()
+    bins["syn_win_sum"] = g["syn_win"].sum()
+    bins["server_sum"] = g["is_server_src"].sum()
+    ip_counts = px.groupby(keys + ["dst_ip"]).size().rename("cnt").reset_index()
+    bins = bins.reset_index()
+
+    def _to_windows(frame: pd.DataFrame) -> pd.DataFrame:
+        parts = []
+        for k in range(n_bins):
+            part = frame.copy()
+            part["window_id"] = part["bin_id"] - k
+            parts.append(part)
+        return pd.concat(parts, ignore_index=True)
+
+    wg = _to_windows(bins).groupby(wkeys, sort=True)
+    out = pd.DataFrame(index=wg["sent_pkts"].sum().index)
+    out["sent_bytes"] = wg["sent_bytes"].sum().astype("int64")
+    out["sent_pkts"] = wg["sent_pkts"].sum().astype(int)
+    for flag in _SENT_FLAGS:
+        out[flag] = wg[flag].sum().astype(int)
+    syn_cnt = wg["syn"].sum()
+    out["syn_win_mean"] = (wg["syn_win_sum"].sum() / syn_cnt).where(syn_cnt > 0, 0.0)
+    out["server_port_ratio"] = wg["server_sum"].sum() / out["sent_pkts"]
+
+    WI = _to_windows(ip_counts)
+    per_ip = WI.groupby(wkeys + ["dst_ip"])["cnt"].sum()
+    out["distinct_dst_ips"] = per_ip.groupby(level=wkeys).size().astype(int)
+
+    result = out.reset_index()
+    result["src_ip"] = ips_to_str(result["src_ip"])
+    result["window_id"] = result["window_id"].astype(int)
+
+    expected = {"src_ip", "window_id", *cfg["packet_features"]["sent_fields"]}
+    if not result.empty and set(result.columns) != expected:
+        raise ValueError(
+            f"sent feature columns drifted from configs/data.yaml: "
+            f"{sorted(set(result.columns) ^ expected)}"
+        )
+    return result
+
+
 def apply_retransmission_backend(
     features: pd.DataFrame, pcap_path: str | Path, cfg: dict
 ) -> tuple[pd.DataFrame, str]:

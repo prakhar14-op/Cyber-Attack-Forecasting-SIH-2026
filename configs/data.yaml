@@ -133,6 +133,22 @@ packet_features:
     - sequential_port_ratio
     - port_entropy
     - retransmission_count
+  # Window-BOUNDED sent-side aggregates (packets the host sent in the window).
+  # Separate list so packet_window_features and sent_window_features each guard
+  # their own output. These replace the leaky whole-flow features (see
+  # docs/decisions/003): every value here is bounded to [w*stride, w*stride+window).
+  sent_fields:
+    - sent_bytes
+    - sent_pkts
+    - syn
+    - ack
+    - fin
+    - rst
+    - psh
+    - urg
+    - syn_win_mean
+    - server_port_ratio
+    - distinct_dst_ips
   payload_hist_bin_edges: [0, 64, 128, 256, 512, 1024, 1460, 8192]
   retransmission_backend: scapy     # tshark | scapy (must agree on the fixture; tshark
                                     # path activates once Wireshark is installed - M2.2)

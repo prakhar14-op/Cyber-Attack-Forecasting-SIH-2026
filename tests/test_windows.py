@@ -47,7 +47,12 @@ def synthetic_day(data_cfg, tmp_path):
     flows.to_parquet(interim / "flows" / "m.parquet", index=False)
 
     stride = data_cfg["windows"]["stride_seconds"]
-    pkt_fields = data_cfg["packet_features"]["fields"]
+    # The packet parquet now carries BOTH the 17 packet-stat fields and the 11
+    # window-bounded sent fields (decision 003) — build_window_features reads
+    # them directly and no longer aggregates flows.
+    pkt_fields = list(data_cfg["packet_features"]["fields"]) + list(
+        data_cfg["packet_features"]["sent_fields"]
+    )
     pkt_rows = []
     for src in ("172.31.0.5", "9.9.9.9"):
         for k in range(3):
@@ -65,11 +70,14 @@ def synthetic_day(data_cfg, tmp_path):
 def test_feature_columns_stable_and_unique(data_cfg):
     cols = W.feature_columns(data_cfg)
     assert len(cols) == len(set(cols)), "feature names must be unique"
-    # the 17 configured packet fields are all present, in config order
+    # packet-stat fields and window-bounded sent fields are all present
     for f in data_cfg["packet_features"]["fields"]:
         assert f in cols
-    assert cols[-3:] == ["internal", "net24_bucket", "server_port_ratio"], (
-        "role features must be the last three, in fixed order"
+    for f in data_cfg["packet_features"]["sent_fields"]:
+        assert f in cols
+    assert "server_port_ratio" in cols, "server_port_ratio is now a window-bounded feature"
+    assert cols[-2:] == ["internal", "net24_bucket"], (
+        "the two static role features must be last, in fixed order"
     )
     # order is a pure function of config — calling twice gives the same list
     assert cols == W.feature_columns(data_cfg)

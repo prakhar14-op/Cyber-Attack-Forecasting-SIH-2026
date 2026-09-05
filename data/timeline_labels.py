@@ -82,6 +82,15 @@ def label_windows(
     stage_priority = {s: i for i, s in enumerate(cfg["stages"])}
 
     host = window_features["host"].astype(str).to_numpy()
+    # Guard the label-before-pseudonymise ordering: HMAC pseudonyms are 16 hex
+    # chars with no dots, so nothing would match a timeline IP and every window
+    # would be silently benign. Fail loudly instead.
+    if len(host) and not any("." in h for h in host[: min(len(host), 1000)]):
+        raise ValueError(
+            "label_windows received hosts with no dotted-IP form — it must run on "
+            "REAL host IPs, before pseudonymisation (build_window_features "
+            "with_pseudonyms=False)"
+        )
     w_start = window_features["window_start"].to_numpy(dtype=float)
     w_end = w_start + window_sec
 

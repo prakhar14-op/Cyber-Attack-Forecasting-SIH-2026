@@ -62,6 +62,10 @@ def extract_member(pcap_path: Path, out_flows: Path, out_packets: Path, cfg: dic
     t_flows = time.perf_counter() - started - t_parse
     features = pf.packet_window_features(packets, cfg)
     features, retrans_backend = pf.apply_retransmission_backend(features, pcap_path, cfg)
+    # Window-bounded sent-side features (decision 003): merge onto the same
+    # (src_ip, window_id) key so windows.py never re-aggregates whole flows.
+    sent = pf.sent_window_features(packets, cfg)
+    features = features.merge(sent, on=["src_ip", "window_id"], how="outer")
     t_feats = time.perf_counter() - started - t_parse - t_flows
 
     out_flows.parent.mkdir(parents=True, exist_ok=True)
