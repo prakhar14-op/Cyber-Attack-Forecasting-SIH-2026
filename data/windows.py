@@ -183,6 +183,59 @@ def build_host_sequences(window_features: pd.DataFrame, cfg: dict) -> dict[str, 
     return result
 
 
+def window_features_from_flows(cfg: dict, flows: pd.DataFrame, anonymizer=None) -> pd.DataFrame:
+    """Per-(source_host, window) features from a FLOW table (engine CSV path).
+
+    A CSV input (CICFlowMeter) has no packets, so the 17 packet-statistic
+    features are unavailable and set to 0; the 11 window-bounded sent features
+    are derived from the flows (bytes/pkts/flags summed per host-window, distinct
+    dst ports/IPs), and role features from the IP. Honest degradation — full
+    features need PCAP (decision 001). Flows contribute to the windows their
+    start timestamp covers (the same overlap grid as the packet path).
+    """
+    from data import packet_features as pf
+
+    fl = flows.copy()
+    fl["ts"] = fl["timestamp"].map(pd.Timestamp.timestamp)
+    parts = []
+    for ids in pf.window_ids_for(fl["ts"], cfg):
+        part = fl.copy()
+        part["window_id"] = ids
+        parts.append(part)
+    ex = pd.concat(parts, ignore_index=True).rename(columns={"src_ip": "host"})
+
+    g = ex.groupby(["host", "window_id"], sort=True)
+    out = pd.DataFrame(index=g.size().index)
+    out["sent_bytes"] = g["fwd_bytes"].sum()
+    out["sent_pkts"] = g["fwd_pkts"].sum()
+    for flag in ("syn", "ack", "fin", "rst", "psh", "urg"):
+        out[flag] = g[flag].sum()
+    out["syn_win_mean"] = g["init_win_fwd"].mean().clip(lower=0)
+    out["distinct_dst_ips"] = g["dst_ip"].nunique()
+    server_ports = set(int(p) for p in cfg["anonymisation"]["server_ports"])
+    ex["_srv"] = ex["src_port"].isin(server_ports)
+    out["server_port_ratio"] = ex.groupby(["host", "window_id"])["_srv"].mean()
+
+    for c in cfg["packet_features"]["fields"]:
+        out[c] = 0.0  # packet-statistic features are unavailable from a CSV
+
+    result = out.reset_index()
+    stride = cfg["windows"]["stride_seconds"]
+    result["window_start"] = result["window_id"].astype("int64") * stride
+    result["day"] = "input"
+    if anonymizer is not None:
+        result["internal"] = result["host"].map(lambda ip: int(anonymizer.is_internal(ip)))
+        result["net24_bucket"] = result["host"].map(anonymizer.net24_bucket)
+    else:
+        result["internal"] = 0
+        result["net24_bucket"] = 0
+
+    ordered = _META_COLS + feature_columns(cfg)
+    return result[ordered].sort_values(["host", "window_id"], kind="stable").reset_index(
+        drop=True
+    )
+
+
 def build_labelled_split(cfg: dict, split: str, anonymizer=None) -> pd.DataFrame:
     """Window features (real hosts) + a 'stage' label column for one split.
 
