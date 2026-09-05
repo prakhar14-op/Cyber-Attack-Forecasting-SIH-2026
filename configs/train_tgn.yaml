@@ -16,6 +16,19 @@ sage:
   embed_dim: 100
   num_layers: 2
 
+# Self-supervised link-prediction training of the memory modules (CPU-sized).
+link_pred:
+  epochs: 3
+  batch_size: 500
+  lr: 0.0005
+  grad_clip: 1.0
+
+# Linear attack head fitted on snapshot embeddings (M5.5 ablation row).
+head:
+  benign_subsample: 200000   # all attack windows + this many benign for head fitting
+  C: 1.0
+  max_iter: 500
+
 optim:
   lr: 0.0005
   weight_decay: 0.00001

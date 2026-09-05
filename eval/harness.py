@@ -91,6 +91,66 @@ def _lstm_scores(cfg, cfg_b, train_split, eval_splits):
     return scores
 
 
+def _tgn_scores(cfg, train_split, eval_splits):
+    """M5.5: TGN memory embeddings + linear head, scored per (host, window).
+
+    Link-prediction training on TRAIN events only; per-split snapshot passes
+    start from a fresh memory (M5.3); the linear head is fit on train snapshot
+    embeddings (all attack + a benign subsample) and applied everywhere.
+    """
+    import pandas as pd
+    from sklearn.linear_model import LogisticRegression
+
+    from data.anonymize import Anonymizer
+    from data.flow_features import fit_scaler, load_split_flows
+    from models import tgn as T
+
+    cfg_t = load_config("train_tgn")
+    set_seed(cfg_t["seed"])
+    anonymizer = Anonymizer.from_config(cfg)
+    msg_scaler = fit_scaler(cfg, split="train")  # train-only, deterministic
+
+    train_flows = load_split_flows(cfg, "train")
+    encoder = T.build_model(
+        cfg_t,
+        num_nodes=pd.concat([train_flows["src_ip"], train_flows["dst_ip"]]).nunique(),
+        msg_dim=len(msg_scaler.mean_),
+    )
+
+    # per-epoch node permutation: rebuild events (ids) each epoch; memory resets
+    # inside train_link_pred at every epoch start.
+    for epoch in range(cfg_t["link_pred"]["epochs"]):
+        events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
+        one_epoch = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
+        losses = T.train_link_pred(encoder, events, one_epoch)
+        print(f"tgn link-pred epoch {epoch}: loss {losses[0]:.4f}", flush=True)
+
+    # ---- head fit on train snapshot embeddings (subsampled benign) ----
+    rng = np.random.RandomState(cfg_t["seed"])
+    attack_idx = np.flatnonzero(train_split.y == 1)
+    benign_idx = np.flatnonzero(train_split.y == 0)
+    take = min(int(cfg_t["head"]["benign_subsample"]), len(benign_idx))
+    sub = np.concatenate([attack_idx, rng.choice(benign_idx, take, replace=False)])
+    readouts = pd.DataFrame(
+        {"host": train_split.host[sub], "window_start": train_split.window_start[sub]}
+    )
+    train_events = T.build_events(cfg_t, train_flows, anonymizer, 0, msg_scaler)
+    emb_train = T.snapshot_embeddings(encoder, train_events, readouts, cfg_t)
+    head = LogisticRegression(
+        C=cfg_t["head"]["C"], max_iter=cfg_t["head"]["max_iter"], class_weight="balanced"
+    ).fit(emb_train, train_split.y[sub])
+
+    # ---- fresh-memory snapshot + score per eval split ----
+    scores = {}
+    for name, split in eval_splits.items():
+        flows = load_split_flows(cfg, name)
+        events = T.build_events(cfg_t, flows, anonymizer, 0, msg_scaler)
+        ro = pd.DataFrame({"host": split.host, "window_start": split.window_start})
+        emb = T.snapshot_embeddings(encoder, events, ro, cfg_t)
+        scores[name] = head.predict_proba(emb)[:, 1]
+    return scores
+
+
 def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
     cfg = load_config("data")
     cfg_eval = load_config("eval")
@@ -109,6 +169,8 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
     evals = {"val": val, "test": test}
     if model_name == "lstm":
         scores = _lstm_scores(cfg, cfg_b, train, evals)
+    elif model_name == "tgn":
+        scores = _tgn_scores(cfg, train, evals)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
 
@@ -155,7 +217,9 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, choices=sorted(baselines.REGISTRY))
+    parser.add_argument(
+        "--model", required=True, choices=sorted(baselines.REGISTRY) + ["tgn"]
+    )
     parser.add_argument("--holdout-family", default=None)
     args = parser.parse_args(argv)
 
