@@ -1,0 +1,12 @@
+# Offline demo hard constraints (CLAUDE.md #1: no telemetry, no network).
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+fileWatcherType = "none"
+
+[global]
+showWarningOnDirectExecution = false
