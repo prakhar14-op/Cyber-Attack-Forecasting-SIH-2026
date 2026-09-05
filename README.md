@@ -26,7 +26,9 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M6 GRAFT | done (`m6-graft`) — causal encoder, test_no_future_leakage green; Time2Vec ablated OFF |
 | M7 world model | done (`m7-forecast`) — RSSM failed the hard gate (decision 004); ships encoder forecasting at horizon k |
 
-| M8–M12 engine, ledger, app, capture, deliverables | not started |
+| M8 engine + explainability | functional — offline predict → SHAP named-feature explanations → MITRE technique → ledger; **8.3 attention-over-windows and 8.7 what-if not yet built** (untagged) |
+| M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
+| M10–M12 app, capture, deliverables | not started |
 
 ## Results
 
@@ -70,6 +72,16 @@ python -m venv .venv
 ```
 
 Verify: `pytest tests/ -q` and `python -m tests.smoke` (both run with sockets blocked).
+**All 7 required tests pass**; the smoke run does 1,000 flows → forecasts → ledger →
+offline verification in ~9 s.
+
+Run the engine on a file, then verify the ledger with no network:
+
+```
+python -m engine.train_engine                 # fit + persist model, threshold, weight digests
+python -c "from engine import predict; predict.predict_file('tests/fixtures/mini.csv', 'run/')"
+python -m ledger.verify_cli run/audit_chain.jsonl
+```
 
 ## Layout
 
