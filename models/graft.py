@@ -90,6 +90,10 @@ class GRAFT(nn.Module):
             torch.ones(t, t, dtype=torch.bool, device=x.device), diagonal=1
         )
         z = self.encoder(h, mask=causal, src_key_padding_mask=padding_mask)
+        if padding_mask is not None:
+            # Zero pad positions so any degenerate value there (an all-masked
+            # attention row yields NaN) can never poison later consumers.
+            z = torch.where(padding_mask.unsqueeze(-1), torch.zeros_like(z), z)
 
         return {
             "embedding": z,

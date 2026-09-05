@@ -60,10 +60,14 @@ def _segment_split(split, seg_len):
             xrow = split.X[seg_rows]
             yrow = split.y[seg_rows]
             if pad:
-                xrow = np.vstack([np.zeros((pad, feat_dim), np.float32), xrow])
-                yrow = np.concatenate([np.zeros(pad, np.int8), yrow])
-                idx = np.concatenate([np.full(pad, -1, np.int64), seg_rows])
-                m = np.concatenate([np.zeros(pad, np.float32), np.ones(len(seg_rows), np.float32)])
+                # RIGHT-pad: position 0 is always a real window. Left-padding
+                # makes the first query's key set fully masked (causal ∩
+                # padding), whose softmax NaN then poisons real positions in
+                # deeper attention layers — observed on real data (nan ECE).
+                xrow = np.vstack([xrow, np.zeros((pad, feat_dim), np.float32)])
+                yrow = np.concatenate([yrow, np.zeros(pad, np.int8)])
+                idx = np.concatenate([seg_rows, np.full(pad, -1, np.int64)])
+                m = np.concatenate([np.ones(len(seg_rows), np.float32), np.zeros(pad, np.float32)])
             else:
                 idx = seg_rows.astype(np.int64)
                 m = np.ones(seg_len, np.float32)

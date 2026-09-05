@@ -108,18 +108,20 @@ def test_pseudonymise_replaces_host_with_hmac(synthetic_day):
     assert all(len(h) == 16 for h in wf["host"].unique())
 
 
-def test_pad_sequence_masks_short_and_truncates_long():
+def test_pad_sequence_right_pads_and_truncates_front():
     feats = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
 
     padded, mask = W.pad_sequence(feats, max_len=8)
     assert padded.shape == (8, 3) and mask.shape == (8,)
-    assert mask[:3].all() and not mask[3:].any(), "pad positions (front) are masked True"
-    assert np.array_equal(padded[3:], feats), "real windows sit at the end (causal)"
-    assert (padded[:3] == 0).all()
+    # RIGHT padding: position 0 is always real (left-padding creates an
+    # all-masked causal query whose NaN poisons deeper attention layers).
+    assert not mask[:5].any() and mask[5:].all(), "pads sit at the END, masked True"
+    assert np.array_equal(padded[:5], feats), "real windows first"
+    assert (padded[5:] == 0).all()
 
     padded2, mask2 = W.pad_sequence(feats, max_len=3)
     assert padded2.shape == (3, 3) and not mask2.any()
-    assert np.array_equal(padded2, feats[-3:]), "keep the most recent windows"
+    assert np.array_equal(padded2, feats[-3:]), "truncation keeps the most recent windows"
 
 
 def test_build_host_sequences_orders_and_pads(synthetic_day):

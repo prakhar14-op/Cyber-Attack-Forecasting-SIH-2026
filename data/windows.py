@@ -148,19 +148,21 @@ def host_windows_for_split(cfg: dict, split: str) -> set[tuple[str, int]]:
 
 
 def pad_sequence(features: np.ndarray, max_len: int) -> tuple[np.ndarray, np.ndarray]:
-    """Right-align (or left-truncate) a [t, F] window sequence to [max_len, F].
+    """RIGHT-pad (or front-truncate) a [t, F] window sequence to [max_len, F].
 
-    Keeps the most recent max_len windows (causal: the newest window is last).
-    Returns (padded, pad_mask) where pad_mask[i] is True for a PADDING position
-    (True = ignore), matching torch TransformerEncoder's src_key_padding_mask.
+    Truncation keeps the most recent max_len windows; padding goes at the END so
+    position 0 is always a real window — left-padding gives the first causal
+    query a fully-masked key set, whose NaN softmax poisons deeper attention
+    layers (observed on real data). Returns (padded, pad_mask), pad_mask True =
+    PADDING (torch src_key_padding_mask convention).
     """
     t, feat_dim = features.shape
     if t >= max_len:
         return features[-max_len:].copy(), np.zeros(max_len, dtype=bool)
     padded = np.zeros((max_len, feat_dim), dtype=features.dtype)
-    padded[max_len - t :] = features  # newest windows sit at the end
+    padded[:t] = features  # real windows first, pads at the end
     mask = np.ones(max_len, dtype=bool)
-    mask[max_len - t :] = False
+    mask[:t] = False
     return padded, mask
 
 

@@ -172,9 +172,17 @@ class RSSM(nn.Module):
         sample: bool = False,
     ) -> dict:
         """The M7.2 contract: filter all observed windows, then imagine from the
-        FILTERED terminal state (never zeros). Returns [B, horizon, ·] heads."""
+        FILTERED terminal state (never zeros). With right-padded sequences the
+        terminal state is the LAST VALID position's state, not the last slot.
+        Returns [B, horizon, ·] heads."""
         states = self.filter(e, delta_t=delta_t, valid=valid, sample=sample)
-        h_t, z_t = states["h"][:, -1], states["z"][:, -1]
+        if valid is None:
+            h_t, z_t = states["h"][:, -1], states["z"][:, -1]
+        else:
+            last = (valid.long().cumsum(dim=1).argmax(dim=1)).clamp(min=0)
+            idx = last.view(-1, 1, 1)
+            h_t = states["h"].gather(1, idx.expand(-1, 1, states["h"].size(-1))).squeeze(1)
+            z_t = states["z"].gather(1, idx.expand(-1, 1, states["z"].size(-1))).squeeze(1)
         return self.imagine(h_t, z_t, horizon, sample=sample)
 
     def ensemble_rollout(
