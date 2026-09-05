@@ -1,10 +1,11 @@
-"""Evaluation plots (M7.7): the lead-time-vs-horizon plot.
+"""Evaluation plots (M7.7): lead-time and AUROC vs forecast horizon.
 
     python -m eval.plots
 
-Reads results/world.json (per-horizon world-model rows) and the horizon-0
-baseline JSONs, renders results/plots/lead_time.png with matplotlib (no CDN,
-offline-safe). Numbers come only from the results files — never typed here.
+Reads results/forecast.json (the shipped encoder forecaster, decision 004) and
+the horizon-0 baseline JSONs, renders results/plots/lead_time.png with
+matplotlib (Agg backend, no CDN — offline-safe). Numbers come only from the
+results files, never typed here.
 """
 
 from __future__ import annotations
@@ -26,42 +27,46 @@ def main() -> int:
     plots_dir = resolve_path(cfg_eval["paths"]["plots_dir"])
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    world_path = results_dir / "world.json"
-    if not world_path.exists():
-        print("results/world.json missing — run `python -m eval.harness --model world`",
+    fc_path = results_dir / "forecast.json"
+    if not fc_path.exists():
+        print("results/forecast.json missing — run `python -m eval.harness --model forecast`",
               file=sys.stderr)
         return 1
-    world = json.loads(world_path.read_text(encoding="utf-8"))
+    fc = json.loads(fc_path.read_text(encoding="utf-8"))
 
     budget = "fpr_0.01"
-    ks, medians, lo, hi = [], [], [], []
-    for k, block in sorted(world["horizons"].items(), key=lambda kv: int(kv[0])):
-        pt = block["test"][budget]
+    ks, lead, lo, hi, auroc = [], [], [], [], []
+    for k, block in sorted(fc["horizons"].items(), key=lambda kv: int(kv[0])):
+        pt = block[budget]
         ks.append(int(k))
-        medians.append(pt["lead_time_median"])
+        lead.append(pt["lead_time_median"])
         lo.append(pt["lead_time_iqr"][0])
         hi.append(pt["lead_time_iqr"][1])
+        auroc.append(block["auroc_test"])
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.plot(ks, medians, "o-", label="world model (median lead)", color="#1a6faf")
-    ax.fill_between(ks, lo, hi, alpha=0.2, color="#1a6faf", label="IQR")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.4))
 
-    for name, style in (("xgb", "--"), ("tgn", ":")):
+    ax1.plot(ks, lead, "o-", color="#1a6faf", label="encoder forecaster (median lead)")
+    ax1.fill_between(ks, lo, hi, alpha=0.18, color="#1a6faf", label="IQR")
+    for name, style, col in (("xgb", "--", "grey"), ("tgn", ":", "#b5651d")):
         p = results_dir / f"{name}.json"
         if p.exists():
             r = json.loads(p.read_text(encoding="utf-8"))
-            lead = r["test"][budget]["lead_time_median"]
-            ax.axhline(lead, linestyle=style, color="grey",
-                       label=f"{name} @ horizon 0 ({lead:.0f}s)")
+            v = r["test"][budget]["lead_time_median"]
+            ax1.axhline(v, linestyle=style, color=col, label=f"{name} @ horizon 0 ({v:.0f}s)")
+    ax1.set_xlabel("forecast horizon k (windows, 5 s stride)")
+    ax1.set_ylabel("median lead time (s), test, 1% FPR")
+    ax1.set_title("Lead time vs horizon (undetected = 0)")
+    ax1.legend(fontsize=8, loc="lower left"); ax1.grid(alpha=0.3)
 
-    ax.set_xlabel("forecast horizon k (windows of 5 s stride)")
-    ax.set_ylabel("median lead time (s), test split, 1% FPR budget")
-    ax.set_title("Lead time vs forecast horizon (undetected episodes = 0)")
-    ax.legend(loc="lower left", fontsize=8)
-    ax.grid(alpha=0.3)
+    ax2.plot(ks, auroc, "s-", color="#2a8f5a")
+    ax2.set_xlabel("forecast horizon k (windows, 5 s stride)")
+    ax2.set_ylabel("test AUROC")
+    ax2.set_title("Ranking holds when forecasting ahead")
+    ax2.set_ylim(0.5, 1.0); ax2.grid(alpha=0.3)
+
     out = plots_dir / "lead_time.png"
-    fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    fig.tight_layout(); fig.savefig(out, dpi=150)
     print(f"-> {out}")
     return 0
 

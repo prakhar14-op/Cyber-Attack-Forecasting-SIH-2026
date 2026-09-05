@@ -22,8 +22,10 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M2 packet features | done (`m2-packet-features`) — one streaming extractor for flow **and** packet features over the 4 days; tshark retransmission backend with scapy fallback |
 | M3 windows + stage labels | done (`m3-windows-labels`) — 30 window-bounded features; critical leakage caught by audit + fixed ([decision 003](docs/decisions/003-window-feature-leakage-fix.md)) |
 | M4 eval harness + baselines | done — LR/XGBoost/LSTM, lead-time-at-fixed-FPR harness; **first demoable point** (see Results) |
-| M5 TGN | done (`m5-tgn`) — beats XGBoost cross-family at horizon 0 (0.954 AUROC); sage fallback deferred until its stop-condition trigger |
-| M6–M7 GRAFT → RSSM | not started |
+| M5 TGN | done (`m5-tgn`) — beats XGBoost cross-family (0.954 AUROC) |
+| M6 GRAFT | done (`m6-graft`) — causal encoder, test_no_future_leakage green; Time2Vec ablated OFF |
+| M7 world model | done (`m7-forecast`) — RSSM failed the hard gate (decision 004); ships encoder forecasting at horizon k |
+
 | M8–M12 engine, ledger, app, capture, deliverables | not started |
 
 ## Results

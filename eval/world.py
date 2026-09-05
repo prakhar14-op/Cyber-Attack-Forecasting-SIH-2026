@@ -120,8 +120,13 @@ def _train_rssm(cfg, cfg_r, E, Ys, Ms, Ss, Dt, horizon):
     g = torch.Generator().manual_seed(cfg_r["seed"])
     kl_log = []
 
+    warmup = int(w.get("kl_warmup_epochs", 0))
     model.train()
     for epoch in range(cfg_r["optim"]["epochs"]):
+        # KL warm-up: anneal the KL weight 0 -> w_kl over the first `warmup`
+        # epochs so the decoder learns to use the latent before KL pressure can
+        # collapse it (the v1 failure mode).
+        kl_scale = 1.0 if warmup == 0 else min(1.0, (epoch + 1) / warmup)
         perm = torch.randperm(n, generator=g)
         tot, kl_sum, batches = 0.0, 0.0, 0
         for i in range(0, n, bs):
@@ -137,7 +142,9 @@ def _train_rssm(cfg, cfg_r, E, Ys, Ms, Ss, Dt, horizon):
                 model, states, Yt[idx], St[idx], Mt[idx], horizon, cfg_r,
                 class_weight=class_w, delta_t=Dtt[idx],
             )
-            loss = w["w_reconstruction"] * l_recon + w["w_kl"] * l_kl + w["w_dynamics"] * l_dyn
+            loss = (w["w_reconstruction"] * l_recon
+                    + kl_scale * w["w_kl"] * l_kl
+                    + w["w_dynamics"] * l_dyn)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_r["optim"]["grad_clip"])
             opt.step()
@@ -176,14 +183,14 @@ def _score_all_horizons(model, E, Ms, Is, Dt, horizon, n_rows):
     return flat
 
 
-def evaluate_world() -> dict:
+def evaluate_world(rssm_config: str = "train_rssm") -> dict:
     from data.anonymize import Anonymizer
     from data.flow_features import fit_scaler
     from models import rssm as R
 
     cfg = load_config("data")
     cfg_eval = load_config("eval")
-    cfg_r = load_config("train_rssm")
+    cfg_r = load_config(rssm_config)
     horizon = cfg["windows"]["forecast_horizon_windows"]
     stride = cfg["windows"]["stride_seconds"]
 
@@ -280,12 +287,13 @@ def evaluate_world() -> dict:
     return result
 
 
-def main() -> int:
-    result = evaluate_world()
+def main(rssm_config: str = "train_rssm", out_name: str = "world") -> int:
+    result = evaluate_world(rssm_config=rssm_config)
+    result["rssm_config"] = rssm_config
     cfg_eval = load_config("eval")
     out_dir = resolve_path(cfg_eval["paths"]["results_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "world.json"
+    out = out_dir / f"{out_name}.json"
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2)
 

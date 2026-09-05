@@ -1,0 +1,34 @@
+# RSSM fix-up config (decision 004 bonus attempt). The v1 run collapsed the
+# posterior and lost to the encoder baseline. Standard anti-collapse recipe:
+# KL warm-up from 0, lower free-bits, down-weight the 128-d reconstruction MSE
+# (it swamped the supervised dynamics term), up-weight dynamics, more epochs.
+
+seed: 1337
+
+model:
+  deter_dim: 200
+  stoch_dim: 32
+  hidden_dim: 200
+  decoder_dim: 128
+  tier: 2
+
+rollout:
+  horizon_k: 8
+  ensemble_samples: 20
+
+loss:
+  dynamics_discount: 0.9
+  kl_balance: 0.8
+  kl_free_bits: 0.3          # was 1.0 — 1.0 forced a large floor the model just sat at
+  kl_warmup_epochs: 6        # anneal w_kl 0 -> 1 so the decoder learns before KL bites
+  w_dynamics: 3.0            # was 1.0 — the supervised forecast term is the point
+  w_kl: 1.0
+  w_reconstruction: 0.1      # was 1.0 — the big continuous MSE starved dynamics
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.00001
+  batch_size: 32
+  epochs: 15                 # was 6
+  grad_clip: 100.0
+  early_stop_patience: 7

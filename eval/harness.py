@@ -387,15 +387,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model", required=True,
-        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec", "world"],
+        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec", "world", "forecast"],
     )
     parser.add_argument("--holdout-family", default=None)
     args = parser.parse_args(argv)
 
-    if args.model == "world":  # M7.7: multi-horizon world-model evaluation
+    if args.model == "world":  # M7.7: multi-horizon RSSM (failed the gate — decision 004)
         from eval import world
 
         return world.main()
+    if args.model == "forecast":  # M7 shipped: encoder forecasting at horizon k
+        from eval import forecast
+
+        return forecast.main()
 
     result = evaluate(args.model, args.holdout_family)
 
