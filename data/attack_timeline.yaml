@@ -1,6 +1,15 @@
 # UNB CSE-CIC-IDS2018 attack timeline — the four model days (decision 001).
 # Source: Table 2, https://www.unb.ca/cic/datasets/ids-2018.html (verified 2026-09-05).
-# Times are capture-local (ADT), format HH:MM, on the given date.
+# Times are capture-local (ADT = UTC-4), format HH:MM, on the given date.
+#
+# MEASURED 2026-09-05: pcap timestamps are UTC. On 14-02 the FTP bruteforce
+# appears 14:33-16:10 UTC = 10:33-12:10 ADT vs the published 10:32-12:09 —
+# a <2 min agreement. timeline_labels.py (M3) must add utc_offset_hours to
+# these local times before intersecting with capture time.
+timezone:
+  timeline: "America/Moncton (ADT)"
+  capture: UTC
+  utc_offset_hours: 4   # UTC = local + 4h during these capture dates
 #
 # attacker/victim entries list every known address form: the testbed's internal
 # 172.31.x.x address and, where UNB lists one, the NAT "valid IP". Host selection
