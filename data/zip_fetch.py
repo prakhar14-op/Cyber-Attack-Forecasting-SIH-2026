@@ -35,7 +35,7 @@ _LOCAL_SIG = b"PK\x03\x04"
 _U16_MAX = 0xFFFF
 _U32_MAX = 0xFFFFFFFF
 _IP_RE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3})")
-_CHUNK = 8 * 1024 * 1024
+_CHUNK = 48 * 1024 * 1024  # large ranges amortise per-request TLS/latency overhead
 
 
 @dataclass

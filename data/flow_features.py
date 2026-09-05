@@ -98,3 +98,89 @@ def canonical_numeric_columns(cfg: dict) -> list[str]:
     """Canonical columns that must be numeric (everything but time, IPs, label)."""
     non_numeric = {"timestamp", "src_ip", "dst_ip", "label"}
     return [name for name in cfg["schema"] if name not in non_numeric]
+
+
+# ---------------------------------------------------------------------------
+# Train-only scaler (M1.6 — resequenced after the extractor by decision 001).
+# ---------------------------------------------------------------------------
+
+
+def load_split_flows(cfg: dict, split: str) -> pd.DataFrame:
+    """Concatenate the extracted canonical flows for every day in a split.
+
+    Reads interim parquet written by `python -m data.extract`; a missing day
+    fails loudly — this never falls back to CSVs or synthetic rows.
+    """
+    import yaml
+
+    from configs import resolve_path
+
+    with open(resolve_path(cfg["paths"]["splits"]), encoding="utf-8") as fh:
+        splits = yaml.safe_load(fh)
+    if split not in splits:
+        raise KeyError(f"unknown split '{split}' (have {sorted(splits)})")
+
+    frames = []
+    for day in splits[split]:
+        day_dir = resolve_path(cfg["paths"]["interim_dir"]) / str(day) / "flows"
+        files = sorted(day_dir.glob("*.parquet"))
+        if not files:
+            raise FileNotFoundError(
+                f"no extracted flows for {day} under {day_dir} — "
+                "run `python -m data.zip_fetch` then `python -m data.extract`"
+            )
+        frames.extend(pd.read_parquet(f) for f in files)
+    return pd.concat(frames, ignore_index=True)
+
+
+def fit_scaler(cfg: dict, split: str = "train"):
+    """Fit a StandardScaler on the canonical numeric columns of ONE split.
+
+    Deterministic for a given extraction state (files sorted, no sampling),
+    which is what tests/test_scaler_train_only.py exploits: refitting on the
+    train split must reproduce the persisted statistics exactly.
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    flows = load_split_flows(cfg, split)
+    columns = canonical_numeric_columns(cfg)
+    matrix = flows[columns].astype(float)
+    return StandardScaler().fit(matrix)
+
+
+def fit_and_persist_scaler(cfg: dict) -> Path:
+    """Fit on train only and persist scaler + feature order next to the weights."""
+    import json
+    import pickle
+
+    from configs import resolve_path
+
+    scaler = fit_scaler(cfg, split="train")
+    scaler_path = resolve_path(cfg["paths"]["scaler"])
+    scaler_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(scaler_path, "wb") as fh:
+        pickle.dump(scaler, fh)
+    names_path = resolve_path(cfg["paths"]["feature_names"])
+    with open(names_path, "w", encoding="utf-8") as fh:
+        json.dump({"flow_numeric": canonical_numeric_columns(cfg)}, fh, indent=2)
+    return scaler_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from configs import load_config
+
+    parser = argparse.ArgumentParser(description="Fit and persist the train-only scaler")
+    parser.add_argument("--fit-scaler", action="store_true", required=True)
+    parser.parse_args(argv)
+
+    path = fit_and_persist_scaler(load_config("data"))
+    print(f"scaler fitted on the train split only -> {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
