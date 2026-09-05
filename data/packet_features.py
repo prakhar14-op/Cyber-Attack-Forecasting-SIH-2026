@@ -32,15 +32,24 @@ _ETH_VLAN = 0x8100
 _PROTO_TCP = 6
 _PROTO_UDP = 17
 
-_PACKET_COLUMNS = [
-    "ts", "src_ip", "dst_ip", "src_port", "dst_port", "protocol",
-    "ttl", "tcp_win", "is_frag", "payload_len", "is_retrans",
-    "syn", "ack", "fin", "rst", "psh", "urg",
-]
+# Column -> array.array typecode. IPs travel as uint32 through the whole
+# pipeline (object strings for 4.7M packets alone cost gigabytes); they become
+# dotted strings only at the output edge via ips_to_str.
+_PACKET_LAYOUT = {
+    "ts": "d", "src_ip": "I", "dst_ip": "I", "src_port": "H", "dst_port": "H",
+    "protocol": "B", "ttl": "B", "tcp_win": "H", "is_frag": "B",
+    "payload_len": "I", "is_retrans": "B",
+    "syn": "B", "ack": "B", "fin": "B", "rst": "B", "psh": "B", "urg": "B",
+}
 
 
-def _ip_str(raw: bytes) -> str:
-    return f"{raw[0]}.{raw[1]}.{raw[2]}.{raw[3]}"
+def ips_to_str(values: pd.Series) -> pd.Series:
+    """uint32 addresses -> dotted strings, via a small unique-value table."""
+    lut = {
+        int(v): f"{(v >> 24) & 255}.{(v >> 16) & 255}.{(v >> 8) & 255}.{v & 255}"
+        for v in pd.unique(values)
+    }
+    return values.map(lut)
 
 
 class _RetransTracker:
@@ -81,18 +90,24 @@ def _packet_time(reader, meta) -> float:
 
 
 def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
-    """Stream one pcap into the compact per-packet table (pass 1)."""
+    """Stream one pcap into the compact per-packet table (pass 1).
+
+    Accumulates into typed array buffers (~40 bytes/packet total) — a
+    list-of-tuples design peaked at ~4 GB RSS on a 4.7M-packet member and
+    would crash on DoS-day captures (M2.1 bound: 1 GB pcap under 4 GB RSS).
+    """
+    import array
+
     pcap_path = Path(pcap_path)
     if not pcap_path.exists():
         raise FileNotFoundError(f"pcap not found: {pcap_path}")
 
     tracker = _RetransTracker(cfg["packet_features"]["retrans_track_per_flow"])
-    rows: list[tuple] = []
+    cols = {name: array.array(code) for name, code in _PACKET_LAYOUT.items()}
 
     reader = _open_raw_reader(pcap_path)
     try:
         for raw, meta in reader:
-            ts = _packet_time(reader, meta)
             if len(raw) < 34:
                 continue
             ethertype = struct.unpack_from("!H", raw, 12)[0]
@@ -103,15 +118,14 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
             if ethertype != _ETH_IPV4 or len(raw) < offset + 20:
                 continue
 
-            ver_ihl = raw[offset]
-            ihl = (ver_ihl & 0x0F) * 4
+            ihl = (raw[offset] & 0x0F) * 4
             total_len = struct.unpack_from("!H", raw, offset + 2)[0]
             flags_frag = struct.unpack_from("!H", raw, offset + 6)[0]
-            is_frag = int(bool(flags_frag & 0x2000) or bool(flags_frag & 0x1FFF))
+            is_frag = 1 if (flags_frag & 0x2000 or flags_frag & 0x1FFF) else 0
             ttl = raw[offset + 8]
             proto = raw[offset + 9]
-            src_ip = _ip_str(raw[offset + 12 : offset + 16])
-            dst_ip = _ip_str(raw[offset + 16 : offset + 20])
+            src_ip = int.from_bytes(raw[offset + 12 : offset + 16], "big")
+            dst_ip = int.from_bytes(raw[offset + 16 : offset + 20], "big")
 
             l4 = offset + ihl
             src_port = dst_port = 0
@@ -134,20 +148,38 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
                 urg = (tcp_flags >> 5) & 0x01
                 payload_len = max(total_len - ihl - data_off, 0)
                 if not is_frag and (payload_len > 0 or syn or fin):
-                    flow_key = (src_ip, dst_ip, src_port, dst_port)
-                    retrans = int(tracker.is_retrans(flow_key, seq, payload_len))
+                    retrans = int(
+                        tracker.is_retrans(
+                            (src_ip, dst_ip, src_port, dst_port), seq, payload_len
+                        )
+                    )
             elif proto == _PROTO_UDP and len(raw) >= l4 + 8:
                 src_port, dst_port = struct.unpack_from("!HH", raw, l4)
                 payload_len = max(struct.unpack_from("!H", raw, l4 + 4)[0] - 8, 0)
 
-            rows.append(
-                (ts, src_ip, dst_ip, src_port, dst_port, proto, ttl, tcp_win,
-                 is_frag, payload_len, retrans, syn, ack, fin, rst, psh, urg)
-            )
+            cols["ts"].append(_packet_time(reader, meta))
+            cols["src_ip"].append(src_ip)
+            cols["dst_ip"].append(dst_ip)
+            cols["src_port"].append(src_port)
+            cols["dst_port"].append(dst_port)
+            cols["protocol"].append(proto)
+            cols["ttl"].append(ttl)
+            cols["tcp_win"].append(tcp_win)
+            cols["is_frag"].append(is_frag)
+            cols["payload_len"].append(min(payload_len, 0xFFFFFFFF))
+            cols["is_retrans"].append(retrans)
+            cols["syn"].append(syn)
+            cols["ack"].append(ack)
+            cols["fin"].append(fin)
+            cols["rst"].append(rst)
+            cols["psh"].append(psh)
+            cols["urg"].append(urg)
     finally:
         reader.close()
 
-    df = pd.DataFrame(rows, columns=_PACKET_COLUMNS)
+    df = pd.DataFrame(
+        {name: np.frombuffer(buf, dtype=buf.typecode).copy() for name, buf in cols.items()}
+    )
     return df.sort_values("ts", kind="stable").reset_index(drop=True)
 
 
@@ -180,48 +212,59 @@ def _explode_to_windows(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
-def _port_scan_stats(ports: np.ndarray) -> tuple[float, float]:
-    """(sequential_port_ratio, port_entropy) over a host-window's dst ports."""
-    if len(ports) < 2:
-        return 0.0, 0.0
-    diffs = np.diff(ports.astype(np.int64))
-    sequential_ratio = float(np.mean(diffs == 1))
-    _, counts = np.unique(ports, return_counts=True)
-    p = counts / counts.sum()
-    entropy = float(-(p * np.log2(p)).sum())
-    return sequential_ratio, entropy
-
-
 def packet_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """The PS-mandated packet features per (src_ip, window_id)."""
+    """The PS-mandated packet features per (src_ip, window_id).
+
+    Fully vectorised — the naive per-group loop ran at ~2.3k pkt/s on real
+    members; group-wise pandas aggregations keep whole days tractable on CPU.
+    Variances are population variances (ddof=0).
+    """
     edges = list(cfg["packet_features"]["payload_hist_bin_edges"]) + [np.inf]
     n_hist = len(edges) - 1
+    keys = ["src_ip", "window_id"]
 
-    exploded = _explode_to_windows(packets, cfg)
-    out_rows = []
-    for (src_ip, window_id), g in exploded.groupby(["src_ip", "window_id"], sort=True):
-        ttl = g["ttl"].to_numpy(dtype=float)
-        tcp = g.loc[g["protocol"] == _PROTO_TCP, "tcp_win"].to_numpy(dtype=float)
-        hist, _ = np.histogram(g["payload_len"].to_numpy(dtype=float), bins=edges)
-        seq_ratio, entropy = _port_scan_stats(g["dst_port"].to_numpy())
-        row = {
-            "src_ip": src_ip,
-            "window_id": int(window_id),
-            "ttl_mean": float(ttl.mean()),
-            "ttl_var": float(ttl.var()),
-            "tcp_win_mean": float(tcp.mean()) if len(tcp) else 0.0,
-            "tcp_win_var": float(tcp.var()) if len(tcp) else 0.0,
-            "frag_flag_count": int(g["is_frag"].sum()),
-            "distinct_dst_ports": int(g["dst_port"].nunique()),
-            "sequential_port_ratio": seq_ratio,
-            "port_entropy": entropy,
-            "retransmission_count": int(g["is_retrans"].sum()),
-        }
-        for i in range(n_hist):
-            row[f"payload_hist_{i}"] = int(hist[i])
-        out_rows.append(row)
+    ex = _explode_to_windows(packets, cfg)
+    ex = ex.sort_values(keys + ["ts"], kind="stable").reset_index(drop=True)
+    ex["tcp_win_only"] = ex["tcp_win"].where(ex["protocol"] == _PROTO_TCP)
+    ex["seq_step"] = ex.groupby(keys)["dst_port"].diff() == 1
 
-    result = pd.DataFrame(out_rows)
+    grp = ex.groupby(keys, sort=True)
+    size = grp.size()
+
+    out = pd.DataFrame(index=size.index)
+    out["ttl_mean"] = grp["ttl"].mean()
+    out["ttl_var"] = grp["ttl"].var(ddof=0)
+    out["tcp_win_mean"] = grp["tcp_win_only"].mean()
+    out["tcp_win_var"] = grp["tcp_win_only"].var(ddof=0)
+    out[["tcp_win_mean", "tcp_win_var"]] = out[["tcp_win_mean", "tcp_win_var"]].fillna(0.0)
+    out["frag_flag_count"] = grp["is_frag"].sum().astype(int)
+    out["distinct_dst_ports"] = grp["dst_port"].nunique().astype(int)
+    out["sequential_port_ratio"] = (
+        (grp["seq_step"].sum() / (size - 1).clip(lower=1)).where(size >= 2, 0.0)
+    )
+
+    port_counts = ex.groupby(keys + ["dst_port"]).size()
+    p = port_counts / port_counts.groupby(level=keys).transform("sum")
+    out["port_entropy"] = (
+        (-(p * np.log2(p))).groupby(level=keys).sum().reindex(out.index).fillna(0.0)
+    )
+
+    out["retransmission_count"] = grp["is_retrans"].sum().astype(int)
+
+    ex["hist_bin"] = pd.cut(
+        ex["payload_len"], bins=edges, right=False, include_lowest=True, labels=False
+    ).astype(int)
+    hist = (
+        ex.groupby(keys + ["hist_bin"]).size().unstack("hist_bin", fill_value=0)
+        .reindex(columns=range(n_hist), fill_value=0)
+    )
+    for i in range(n_hist):
+        out[f"payload_hist_{i}"] = hist[i].reindex(out.index).fillna(0).astype(int)
+
+    result = out.reset_index()
+    result["src_ip"] = ips_to_str(result["src_ip"])
+    result["window_id"] = result["window_id"].astype(int)
+
     expected = {"src_ip", "window_id", *cfg["packet_features"]["fields"]}
     if not result.empty and set(result.columns) != expected:
         raise ValueError(
@@ -247,62 +290,84 @@ def assemble_flows(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     timeout = cfg["flows"]["timeout_seconds"]
     missing_win = cfg["flows"]["missing_init_win"]
 
-    pk = packets.copy()
-    a = pk[["src_ip", "src_port"]].astype(str).agg(":".join, axis=1)
-    b = pk[["dst_ip", "dst_port"]].astype(str).agg(":".join, axis=1)
-    lo = np.minimum(a, b)
-    hi = np.maximum(a, b)
-    pk["pair_key"] = lo + "|" + hi + "|" + pk["protocol"].astype(str)
+    pk = packets.sort_values("ts", kind="stable").reset_index(drop=True).copy()
+    pk["payload_len"] = pk["payload_len"].astype("int64")
 
-    pk = pk.sort_values("ts", kind="stable")
-    gap = pk.groupby("pair_key")["ts"].diff().fillna(0.0)
-    pk["flow_id"] = (gap > timeout).groupby(pk["pair_key"]).cumsum()
-    pk["flow_key"] = pk["pair_key"] + "#" + pk["flow_id"].astype(str)
+    # Endpoint pair as numbers (uint32 ip << 16 | port), order-normalised.
+    a_key = (pk["src_ip"].to_numpy("uint64") << 16) | pk["src_port"].to_numpy("uint64")
+    b_key = (pk["dst_ip"].to_numpy("uint64") << 16) | pk["dst_port"].to_numpy("uint64")
+    pk["_pair_lo"] = np.minimum(a_key, b_key)
+    pk["_pair_hi"] = np.maximum(a_key, b_key)
 
-    flows = []
-    for _, g in pk.groupby("flow_key", sort=False):
-        first = g.iloc[0]
-        src_ip, src_port = first["src_ip"], int(first["src_port"])
-        dst_ip, dst_port = first["dst_ip"], int(first["dst_port"])
-        fwd = (g["src_ip"] == src_ip) & (g["src_port"] == src_port)
-        bwd = ~fwd
+    conn = pk.groupby(["_pair_lo", "_pair_hi", "protocol"], sort=False).ngroup()
+    gap = pk.groupby(conn)["ts"].diff().fillna(0.0)
+    split = (gap > timeout).groupby(conn).cumsum()
+    pk["flow_key"] = pk.groupby([conn, split], sort=False).ngroup()
 
-        ts = g["ts"].to_numpy(dtype=float)
-        iat = np.diff(ts) if len(ts) > 1 else np.array([0.0])
+    # Direction: the first packet of each flow defines the (src, dst) endpoints.
+    grp = pk.groupby("flow_key", sort=False)
+    first = grp[["src_ip", "src_port", "dst_ip", "dst_port", "protocol", "ts"]].first()
+    first_src = pk["flow_key"].map(first["src_ip"])
+    first_sport = pk["flow_key"].map(first["src_port"])
+    fwd = (pk["src_ip"] == first_src) & (pk["src_port"] == first_sport)
 
-        fwd_syn = g[fwd & (g["syn"] == 1)]
-        bwd_syn = g[bwd & (g["syn"] == 1)]
+    pk["fwd_pkt"] = fwd.astype(int)
+    pk["bwd_pkt"] = (~fwd).astype(int)
+    pk["fwd_payload"] = pk["payload_len"].where(fwd, 0)
+    pk["bwd_payload"] = pk["payload_len"].where(~fwd, 0)
+    pk["iat"] = grp["ts"].diff()
 
-        flows.append({
-            "timestamp": pd.to_datetime(ts[0], unit="s"),
-            "src_ip": src_ip,
-            "dst_ip": dst_ip,
-            "src_port": src_port,
-            "dst_port": dst_port,
-            "protocol": int(first["protocol"]),
-            "duration": float((ts[-1] - ts[0]) * 1e6),  # microseconds, like CIC
-            "fwd_bytes": float(g.loc[fwd, "payload_len"].sum()),
-            "bwd_bytes": float(g.loc[bwd, "payload_len"].sum()),
-            "fwd_pkts": int(fwd.sum()),
-            "bwd_pkts": int(bwd.sum()),
-            "syn": int(g["syn"].sum()),
-            "ack": int(g["ack"].sum()),
-            "fin": int(g["fin"].sum()),
-            "rst": int(g["rst"].sum()),
-            "psh": int(g["psh"].sum()),
-            "urg": int(g["urg"].sum()),
-            "iat_mean": float(iat.mean() * 1e6),
-            "iat_std": float(iat.std() * 1e6),
-            "iat_max": float(iat.max() * 1e6),
-            "init_win_fwd": int(fwd_syn.iloc[0]["tcp_win"]) if len(fwd_syn) else missing_win,
-            "init_win_bwd": int(bwd_syn.iloc[0]["tcp_win"]) if len(bwd_syn) else missing_win,
+    agg = grp.agg(
+        ts_first=("ts", "first"),
+        ts_last=("ts", "last"),
+        fwd_bytes=("fwd_payload", "sum"),
+        bwd_bytes=("bwd_payload", "sum"),
+        fwd_pkts=("fwd_pkt", "sum"),
+        bwd_pkts=("bwd_pkt", "sum"),
+        syn=("syn", "sum"),
+        ack=("ack", "sum"),
+        fin=("fin", "sum"),
+        rst=("rst", "sum"),
+        psh=("psh", "sum"),
+        urg=("urg", "sum"),
+        iat_mean=("iat", "mean"),
+        iat_max=("iat", "max"),
+    )
+    iat_std = grp["iat"].std(ddof=0)
+
+    syn_rows = pk[pk["syn"] == 1]
+    init_fwd = syn_rows[fwd.loc[syn_rows.index]].groupby("flow_key")["tcp_win"].first()
+    init_bwd = syn_rows[~fwd.loc[syn_rows.index]].groupby("flow_key")["tcp_win"].first()
+
+    out = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(agg["ts_first"], unit="s"),
+            "src_ip": ips_to_str(first["src_ip"]),
+            "dst_ip": ips_to_str(first["dst_ip"]),
+            "src_port": first["src_port"].astype(int),
+            "dst_port": first["dst_port"].astype(int),
+            "protocol": first["protocol"].astype(int),
+            "duration": (agg["ts_last"] - agg["ts_first"]) * 1e6,  # microseconds, like CIC
+            "fwd_bytes": agg["fwd_bytes"].astype(float),
+            "bwd_bytes": agg["bwd_bytes"].astype(float),
+            "fwd_pkts": agg["fwd_pkts"].astype(int),
+            "bwd_pkts": agg["bwd_pkts"].astype(int),
+            "syn": agg["syn"].astype(int),
+            "ack": agg["ack"].astype(int),
+            "fin": agg["fin"].astype(int),
+            "rst": agg["rst"].astype(int),
+            "psh": agg["psh"].astype(int),
+            "urg": agg["urg"].astype(int),
+            "iat_mean": (agg["iat_mean"] * 1e6).fillna(0.0),
+            "iat_std": (iat_std * 1e6).fillna(0.0),
+            "iat_max": (agg["iat_max"] * 1e6).fillna(0.0),
+            "init_win_fwd": init_fwd.reindex(agg.index).fillna(missing_win).astype(int),
+            "init_win_bwd": init_bwd.reindex(agg.index).fillna(missing_win).astype(int),
             "label": "unlabeled",
-        })
+        }
+    )
 
-    out = pd.DataFrame(flows)
-    if not out.empty:
-        canonical = list(cfg["schema"].keys())
-        if list(out.columns) != canonical:
-            raise ValueError("flow assembler drifted from the canonical schema")
-        out = out.sort_values("timestamp", kind="stable").reset_index(drop=True)
-    return out
+    canonical = list(cfg["schema"].keys())
+    if list(out.columns) != canonical:
+        raise ValueError("flow assembler drifted from the canonical schema")
+    return out.sort_values("timestamp", kind="stable").reset_index(drop=True)

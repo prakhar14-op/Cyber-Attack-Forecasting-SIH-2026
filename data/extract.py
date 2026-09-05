@@ -37,10 +37,16 @@ def peak_rss_mb() -> float:
                 ("PeakPagefileUsage", ctypes.c_size_t),
             ]
 
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_info = kernel32.K32GetProcessMemoryInfo
+        get_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(_PMC), ctypes.c_uint32]
+        get_info.restype = ctypes.c_int
+
         pmc = _PMC()
         pmc.cb = ctypes.sizeof(_PMC)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb)
+        handle = ctypes.c_void_p(kernel32.GetCurrentProcess())
+        if not get_info(handle, ctypes.byref(pmc), pmc.cb):
+            return -1.0
         return pmc.PeakWorkingSetSize / 2**20
     except Exception:
         return -1.0
@@ -51,8 +57,11 @@ def extract_member(pcap_path: Path, out_flows: Path, out_packets: Path, cfg: dic
 
     started = time.perf_counter()
     packets = pf.extract_packet_table(pcap_path, cfg)
+    t_parse = time.perf_counter() - started
     flows = pf.assemble_flows(packets, cfg)
+    t_flows = time.perf_counter() - started - t_parse
     features = pf.packet_window_features(packets, cfg)
+    t_feats = time.perf_counter() - started - t_parse - t_flows
 
     out_flows.parent.mkdir(parents=True, exist_ok=True)
     out_packets.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +73,7 @@ def extract_member(pcap_path: Path, out_flows: Path, out_packets: Path, cfg: dic
         "flows": len(flows),
         "host_windows": len(features),
         "seconds": time.perf_counter() - started,
+        "stage_seconds": (t_parse, t_flows, t_feats),
         "pcap_mb": pcap_path.stat().st_size / 2**20,
         "peak_rss_mb": peak_rss_mb(),
     }
@@ -110,12 +120,14 @@ def main(argv: list[str] | None = None) -> int:
             grand["packets"] += stats["packets"]
             grand["flows"] += stats["flows"]
             rate = stats["packets"] / max(stats["seconds"], 1e-9)
+            t_parse, t_flows, t_feats = stats["stage_seconds"]
             print(
                 f"[{date}] ({i}/{len(members)}) {stem}: "
                 f"{stats['pcap_mb']:.0f} MB pcap, {stats['packets']:,} pkts -> "
                 f"{stats['flows']:,} flows, {stats['host_windows']:,} host-windows "
-                f"in {stats['seconds']:.1f}s ({rate:,.0f} pkt/s, "
-                f"peak RSS {stats['peak_rss_mb']:.0f} MB)",
+                f"in {stats['seconds']:.1f}s "
+                f"(parse {t_parse:.1f}s / flows {t_flows:.1f}s / feats {t_feats:.1f}s, "
+                f"{rate:,.0f} pkt/s, peak RSS {stats['peak_rss_mb']:.0f} MB)",
                 flush=True,
             )
         print(f"[{date}] done", flush=True)
