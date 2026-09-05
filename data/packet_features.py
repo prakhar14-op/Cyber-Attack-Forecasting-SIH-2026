@@ -179,10 +179,15 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
     finally:
         reader.close()
 
+    # frombuffer views are read-only, which every downstream op tolerates
+    # (they all derive new arrays); copying would transiently double memory
+    # on tens of millions of packets.
     df = pd.DataFrame(
-        {name: np.frombuffer(buf, dtype=buf.typecode).copy() for name, buf in cols.items()}
+        {name: np.frombuffer(buf, dtype=buf.typecode) for name, buf in cols.items()}
     )
-    return df.sort_values("ts", kind="stable").reset_index(drop=True)
+    if not df["ts"].is_monotonic_increasing:  # captures are time-ordered already
+        df = df.sort_values("ts", kind="stable").reset_index(drop=True)
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +219,12 @@ def _explode_to_windows(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
-def packet_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    """The PS-mandated packet features per (src_ip, window_id).
+def _packet_window_features_reference(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """Direct (row-explosion) implementation — the semantic reference.
 
-    Fully vectorised — the naive per-group loop ran at ~2.3k pkt/s on real
-    members; group-wise pandas aggregations keep whole days tractable on CPU.
-    Variances are population variances (ddof=0).
+    Triples the row count, so it is only safe on small inputs; the production
+    path is the bin-composed packet_window_features, and a test asserts the
+    two agree. Variances are population variances (ddof=0).
     """
     edges = list(cfg["packet_features"]["payload_hist_bin_edges"]) + [np.inf]
     n_hist = len(edges) - 1
@@ -339,6 +344,126 @@ def retransmission_counts_tshark(pcap_path: str | Path, cfg: dict) -> pd.DataFra
     return counts
 
 
+def packet_window_features(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """The PS-mandated packet features per (src_ip, window_id).
+
+    Aggregates once into non-overlapping stride bins, then composes each
+    window from its window//stride bins — no row explosion, so flood captures
+    (tens of millions of packets) stay in bounded memory. Every statistic
+    composes exactly (sums, sum-of-squares, port-count multisets, and the
+    sequential-step count including bin boundaries); a test pins equality
+    against _packet_window_features_reference.
+    """
+    edges = list(cfg["packet_features"]["payload_hist_bin_edges"]) + [np.inf]
+    n_hist = len(edges) - 1
+    stride = cfg["windows"]["stride_seconds"]
+    n_bins = cfg["windows"]["window_seconds"] // stride
+    keys = ["src_ip", "bin_id"]
+
+    px = packets[
+        ["ts", "src_ip", "dst_port", "protocol", "ttl", "tcp_win",
+         "is_frag", "payload_len", "is_retrans"]
+    ].copy()
+    px["bin_id"] = np.floor(px["ts"].to_numpy(dtype=float) / stride).astype(np.int64)
+    px["ttl_f"] = px["ttl"].astype("float64")
+    px["ttl_sq"] = px["ttl_f"] ** 2
+    px["win_f"] = px["tcp_win"].where(px["protocol"] == _PROTO_TCP).astype("float64")
+    px["win_sq"] = px["win_f"] ** 2
+    px["seq_step"] = px.groupby(keys)["dst_port"].diff() == 1
+    px["hist_bin"] = pd.cut(
+        px["payload_len"], bins=edges, right=False, include_lowest=True, labels=False
+    ).astype(int)
+
+    g = px.groupby(keys, sort=True)
+    bins = pd.DataFrame(index=g.size().index)
+    bins["n"] = g.size()
+    bins["ttl_sum"] = g["ttl_f"].sum()
+    bins["ttl_sumsq"] = g["ttl_sq"].sum()
+    bins["win_n"] = g["win_f"].count()
+    bins["win_sum"] = g["win_f"].sum()
+    bins["win_sumsq"] = g["win_sq"].sum()
+    bins["frag"] = g["is_frag"].sum()
+    bins["retr"] = g["is_retrans"].sum()
+    bins["seq_hits"] = g["seq_step"].sum()
+    bins["first_port"] = g["dst_port"].first().astype("int64")
+    bins["last_port"] = g["dst_port"].last().astype("int64")
+    hist_bins = (
+        px.groupby(keys + ["hist_bin"]).size().unstack("hist_bin", fill_value=0)
+        .reindex(columns=range(n_hist), fill_value=0)
+        .reindex(bins.index, fill_value=0)
+    )
+    port_counts = px.groupby(keys + ["dst_port"]).size().rename("cnt").reset_index()
+
+    bins = bins.reset_index()
+
+    # Bin b feeds windows b-n_bins+1 .. b; equivalently window w = bins w..w+n_bins-1.
+    def _to_windows(frame: pd.DataFrame) -> pd.DataFrame:
+        parts = []
+        for k in range(n_bins):
+            part = frame.copy()
+            part["window_id"] = part["bin_id"] - k
+            parts.append(part)
+        return pd.concat(parts, ignore_index=True)
+
+    W = _to_windows(bins).sort_values(["src_ip", "window_id", "bin_id"], kind="stable")
+    wkeys = ["src_ip", "window_id"]
+    wg = W.groupby(wkeys, sort=True)
+
+    n = wg["n"].sum()
+    out = pd.DataFrame(index=n.index)
+    ttl_mean = wg["ttl_sum"].sum() / n
+    out["ttl_mean"] = ttl_mean
+    out["ttl_var"] = (wg["ttl_sumsq"].sum() / n - ttl_mean**2).clip(lower=0.0)
+    win_n = wg["win_n"].sum()
+    win_mean = (wg["win_sum"].sum() / win_n).where(win_n > 0, 0.0)
+    out["tcp_win_mean"] = win_mean
+    out["tcp_win_var"] = (
+        (wg["win_sumsq"].sum() / win_n - win_mean**2).clip(lower=0.0).where(win_n > 0, 0.0)
+    )
+    out["frag_flag_count"] = wg["frag"].sum().astype(int)
+    out["retransmission_count"] = wg["retr"].sum().astype(int)
+
+    # Sequential steps: in-bin hits plus boundaries between consecutive present
+    # bins (empty bins hold no packets, so present-bin adjacency IS packet
+    # adjacency). Denominator n-1 = sum(n_b - 1) + (#present bins - 1).
+    prev_last = wg["last_port"].shift()
+    boundary_hits = ((W["first_port"] - prev_last) == 1).groupby(
+        [W["src_ip"], W["window_id"]]
+    ).sum()
+    seq_total = wg["seq_hits"].sum() + boundary_hits
+    out["sequential_port_ratio"] = (seq_total / (n - 1).clip(lower=1)).where(n >= 2, 0.0)
+
+    WH = _to_windows(hist_bins.reset_index()).groupby(wkeys)
+    for i in range(n_hist):
+        out[f"payload_hist_{i}"] = WH[i].sum().astype(int)
+
+    WP = _to_windows(port_counts)
+    per_port = WP.groupby(wkeys + ["dst_port"])["cnt"].sum()
+    out["distinct_dst_ports"] = per_port.groupby(level=wkeys).size().astype(int)
+    p = per_port / per_port.groupby(level=wkeys).transform("sum")
+    out["port_entropy"] = (-(p * np.log2(p))).groupby(level=wkeys).sum()
+
+    # Rows already follow numeric (src_ip, window_id) order from the sorted
+    # groupby — identical to the reference; convert addresses only now.
+    result = out.reset_index()
+    result["src_ip"] = ips_to_str(result["src_ip"])
+    result["window_id"] = result["window_id"].astype(int)
+
+    expected = {"src_ip", "window_id", *cfg["packet_features"]["fields"]}
+    if not result.empty and set(result.columns) != expected:
+        raise ValueError(
+            f"packet feature columns drifted from configs/data.yaml: "
+            f"{sorted(set(result.columns) ^ expected)}"
+        )
+    return result
+
+
+# Partition threshold for flow assembly: pair-partitioned processing keeps the
+# per-partition intermediates bounded on flood captures (tens of millions of
+# packets). Partitioning by endpoint pair is EXACT — a flow never spans pairs.
+_FLOW_PARTITION_ROWS = 4_000_000
+
+
 def assemble_flows(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """Group packets into bidirectional flows; emit the canonical 23 columns.
 
@@ -346,18 +471,43 @@ def assemble_flows(packets: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     source. A quiet gap longer than flows.timeout_seconds splits the 5-tuple
     into a new flow. The label column is 'unlabeled' — labels come from the
     attack timeline at window-build time (M3), never from the extractor.
+    Inputs above _FLOW_PARTITION_ROWS are processed per endpoint-pair
+    partition (identical output, bounded memory).
     """
+    if not packets["ts"].is_monotonic_increasing:
+        packets = packets.sort_values("ts", kind="stable").reset_index(drop=True)
+
+    a_key = (packets["src_ip"].to_numpy("uint64") << 16) | packets["src_port"].to_numpy("uint64")
+    b_key = (packets["dst_ip"].to_numpy("uint64") << 16) | packets["dst_port"].to_numpy("uint64")
+    pair_lo = np.minimum(a_key, b_key)
+    pair_hi = np.maximum(a_key, b_key)
+
+    n_parts = max(1, -(-len(packets) // _FLOW_PARTITION_ROWS))
+    if n_parts == 1:
+        out = _assemble_flows_partition(packets, pair_lo, pair_hi, cfg)
+    else:
+        assignment = pair_lo % np.uint64(n_parts)
+        parts = [
+            _assemble_flows_partition(
+                packets.loc[assignment == p], pair_lo[assignment == p],
+                pair_hi[assignment == p], cfg,
+            )
+            for p in range(n_parts)
+        ]
+        out = pd.concat(parts, ignore_index=True)
+    return out.sort_values("timestamp", kind="stable").reset_index(drop=True)
+
+
+def _assemble_flows_partition(
+    packets: pd.DataFrame, pair_lo: np.ndarray, pair_hi: np.ndarray, cfg: dict
+) -> pd.DataFrame:
     timeout = cfg["flows"]["timeout_seconds"]
     missing_win = cfg["flows"]["missing_init_win"]
 
-    pk = packets.sort_values("ts", kind="stable").reset_index(drop=True).copy()
+    pk = packets.reset_index(drop=True).copy()
     pk["payload_len"] = pk["payload_len"].astype("int64")
-
-    # Endpoint pair as numbers (uint32 ip << 16 | port), order-normalised.
-    a_key = (pk["src_ip"].to_numpy("uint64") << 16) | pk["src_port"].to_numpy("uint64")
-    b_key = (pk["dst_ip"].to_numpy("uint64") << 16) | pk["dst_port"].to_numpy("uint64")
-    pk["_pair_lo"] = np.minimum(a_key, b_key)
-    pk["_pair_hi"] = np.maximum(a_key, b_key)
+    pk["_pair_lo"] = pair_lo
+    pk["_pair_hi"] = pair_hi
 
     conn = pk.groupby(["_pair_lo", "_pair_hi", "protocol"], sort=False).ngroup()
     gap = pk.groupby(conn)["ts"].diff().fillna(0.0)

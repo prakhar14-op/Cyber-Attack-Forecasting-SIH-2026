@@ -177,3 +177,57 @@ def test_pcapng_members_parse_identically_to_pcap(tmp_path, data_cfg):
     ng = pf.extract_packet_table(ng_path, data_cfg)
 
     pd.testing.assert_frame_equal(classic, ng)
+
+
+def _random_packet_table(n, n_hosts=6, seed=3):
+    """A synthetic parsed-packet table shaped like extract_packet_table output."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    hosts = (0x0A000000 + rng.integers(1, 250, n_hosts)).astype("uint32")  # 10.0.0.x
+    df = pd.DataFrame(
+        {
+            "ts": BASE_TS + np.sort(rng.uniform(0, 120, n)),
+            "src_ip": rng.choice(hosts, n),
+            "dst_ip": rng.choice(hosts, n),
+            "src_port": rng.integers(1024, 65535, n).astype("uint16"),
+            "dst_port": rng.choice(
+                np.concatenate([np.arange(2000, 2032), [80, 443]]), n
+            ).astype("uint16"),
+            "protocol": rng.choice(np.array([6, 6, 6, 17], dtype="uint8"), n),
+            "ttl": rng.choice(np.array([32, 64, 128], dtype="uint8"), n),
+            "tcp_win": rng.integers(0, 65535, n).astype("uint16"),
+            "is_frag": (rng.random(n) < 0.02).astype("uint8"),
+            "payload_len": rng.choice(
+                np.array([0, 40, 100, 512, 1460, 3000], dtype="uint32"), n
+            ),
+            "is_retrans": (rng.random(n) < 0.05).astype("uint8"),
+        }
+    )
+    for flag in ("syn", "ack", "fin", "rst", "psh", "urg"):
+        df[flag] = (rng.random(n) < 0.3).astype("uint8")
+    return df
+
+
+def test_bin_composed_features_equal_reference_implementation(data_cfg):
+    table = _random_packet_table(50_000)
+    composed = pf.packet_window_features(table, data_cfg)
+    reference = pf._packet_window_features_reference(table, data_cfg)
+
+    composed = composed[sorted(composed.columns)].reset_index(drop=True)
+    reference = reference[sorted(reference.columns)].reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        composed, reference, check_dtype=False, rtol=1e-9, atol=1e-9
+    )
+
+
+def test_partitioned_flow_assembly_equals_direct(data_cfg, monkeypatch):
+    table = _random_packet_table(30_000, seed=11)
+    direct = pf.assemble_flows(table, data_cfg)
+    monkeypatch.setattr(pf, "_FLOW_PARTITION_ROWS", 2_000)  # force ~15 partitions
+    partitioned = pf.assemble_flows(table, data_cfg)
+
+    key = ["timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "protocol"]
+    direct = direct.sort_values(key, kind="stable").reset_index(drop=True)
+    partitioned = partitioned.sort_values(key, kind="stable").reset_index(drop=True)
+    pd.testing.assert_frame_equal(direct, partitioned, check_dtype=False)
