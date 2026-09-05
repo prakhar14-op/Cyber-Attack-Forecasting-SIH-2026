@@ -154,3 +154,26 @@ def test_scapy_and_tshark_retransmission_counts_agree(tmp_path, data_cfg):
     assert scapy_nonzero.to_dict() == tshark_nonzero.to_dict(), (
         "scapy heuristic and tshark disagree on the fixture's retransmissions"
     )
+
+
+def test_pcapng_members_parse_identically_to_pcap(tmp_path, data_cfg):
+    """Two of the real 16-02 members are pcapng; the dissecting-reader bug that
+    crashed on them stays fixed: both container formats parse to equal tables."""
+    from scapy.utils import PcapNgWriter
+
+    packets = [
+        _pkt(BASE_TS + 0.0, 44000, 80, flags="S", seq=1),
+        _pkt(BASE_TS + 0.2, 44000, 80, flags="PA", seq=2, payload=b"payload"),
+        _pkt(BASE_TS + 0.4, 44000, 443, flags="S", seq=3),
+    ]
+    classic = _extract(tmp_path, packets, data_cfg)
+
+    ng_path = tmp_path / "capture.pcapng"
+    writer = PcapNgWriter(str(ng_path))
+    for p in packets:
+        writer.write(p)
+    writer.close()
+    assert ng_path.read_bytes()[:4] == b"\x0a\x0d\x0d\x0a", "fixture must be real pcapng"
+    ng = pf.extract_packet_table(ng_path, data_cfg)
+
+    pd.testing.assert_frame_equal(classic, ng)

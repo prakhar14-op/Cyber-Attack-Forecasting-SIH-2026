@@ -71,12 +71,14 @@ class _RetransTracker:
 
 
 def _open_raw_reader(pcap_path: Path):
-    from scapy.utils import PcapNgReader, RawPcapReader
+    # Raw readers only: the dissecting PcapNgReader yields Packet objects, not
+    # (bytes, metadata) tuples — that mistake crashed on the first pcapng member.
+    from scapy.utils import RawPcapNgReader, RawPcapReader
 
     with open(pcap_path, "rb") as fh:
         magic = fh.read(4)
     if magic == b"\x0a\x0d\x0d\x0a":
-        return PcapNgReader(str(pcap_path))
+        return RawPcapNgReader(str(pcap_path))
     return RawPcapReader(str(pcap_path))
 
 
