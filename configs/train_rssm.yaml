@@ -7,7 +7,7 @@ model:
   stoch_dim: 32           # stochastic latent (Tier 2)
   hidden_dim: 200
   decoder_dim: 128        # heads apply to the DECODED state, never raw h (M7.1)
-  tier: 1                 # 1 = deterministic transition; 2 = stochastic latent
+  tier: 2                 # 1 = deterministic transition; 2 = stochastic latent (the deliverable)
 
 rollout:
   # Filter over observed windows (posterior), then imagine with the prior —
@@ -28,6 +28,6 @@ optim:
   lr: 0.0003
   weight_decay: 0.00001
   batch_size: 32
-  epochs: 60
+  epochs: 6               # CPU-sized (no GPU); revisit if underfit
   grad_clip: 100.0
   early_stop_patience: 7

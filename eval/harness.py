@@ -165,7 +165,7 @@ def _delta_t_for_segments(split, index_map, stride):
     return delta
 
 
-def _tgn_graft_scores(cfg, train_split, eval_splits):
+def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = False):
     """M6.6: GRAFT (causal transformer) over TGN embedding sequences, horizon 0.
 
     TGN is trained exactly as in the M5 row (link-pred, train events only,
@@ -185,6 +185,8 @@ def _tgn_graft_scores(cfg, train_split, eval_splits):
 
     cfg_t = load_config("train_tgn")
     cfg_g = load_config("train_graft")
+    if ablate_time2vec:  # M6.2 ablation row: identical run, Time2Vec off
+        cfg_g = {**cfg_g, "model": {**cfg_g["model"], "use_time2vec": False}}
     set_seed(cfg_g["seed"])
     anonymizer = Anonymizer.from_config(cfg)
     msg_scaler = fit_scaler(cfg, split="train")
@@ -269,8 +271,9 @@ def _tgn_graft_scores(cfg, train_split, eval_splits):
     from configs import resolve_path
 
     art = resolve_path(cfg["paths"]["artifacts_dir"]); art.mkdir(parents=True, exist_ok=True)
-    torch.save(encoder.state_dict(), art / "tgn_encoder.pt")
-    torch.save(model.state_dict(), art / "graft.pt")
+    if not ablate_time2vec:  # only the full model becomes the M7 artifact
+        torch.save(encoder.state_dict(), art / "tgn_encoder.pt")
+        torch.save(model.state_dict(), art / "graft.pt")
 
     # ---- score eval splits ----
     scores = {}
@@ -317,6 +320,8 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
         scores = _tgn_scores(cfg, train, evals)
     elif model_name == "tgn_graft":
         scores = _tgn_graft_scores(cfg, train, evals)
+    elif model_name == "tgn_graft_no_time2vec":
+        scores = _tgn_graft_scores(cfg, train, evals, ablate_time2vec=True)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
 
@@ -365,10 +370,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model", required=True,
-        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft"],
+        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec", "world"],
     )
     parser.add_argument("--holdout-family", default=None)
     args = parser.parse_args(argv)
+
+    if args.model == "world":  # M7.7: multi-horizon world-model evaluation
+        from eval import world
+
+        return world.main()
 
     result = evaluate(args.model, args.holdout_family)
 

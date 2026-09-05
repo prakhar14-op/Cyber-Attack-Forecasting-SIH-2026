@@ -48,6 +48,7 @@ class GRAFT(nn.Module):
         n_stages = cfg["heads"]["stage_classes"]
 
         self.input_proj = nn.Linear(feature_dim, d)
+        self.use_time2vec = bool(p.get("use_time2vec", True))  # M6.2 ablation switch
         self.time2vec = Time2Vec(p["time2vec_dim"])
         self.time_proj = nn.Linear(p["time2vec_dim"], d)
 
@@ -79,7 +80,9 @@ class GRAFT(nn.Module):
         if delta_t is None:
             delta_t = torch.ones(b, t, device=x.device)
 
-        h = self.input_proj(x) + self.time_proj(self.time2vec(delta_t))
+        h = self.input_proj(x)
+        if self.use_time2vec:
+            h = h + self.time_proj(self.time2vec(delta_t))
 
         # Bool causal mask (True = masked = future), same dtype as the padding
         # mask; equivalent to generate_square_subsequent_mask's -inf float form.
