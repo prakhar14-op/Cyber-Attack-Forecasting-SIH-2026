@@ -9,7 +9,13 @@ model:
   ffn_dim: 256
   dropout: 0.1
   causal: true            # the encoder is causal; bidirectional is a bug, not a choice
-  time2vec_dim: 8         # Time2Vec on inter-arrival time replaces sinusoidal PE
+  time2vec_dim: 8
+  # M6.2 ablation verdict (results/tgn_graft{,_no_time2vec}.json): WITHOUT
+  # Time2Vec the cross-family test improves 0.757 -> 0.895 AUROC, 1/2 -> 2/2
+  # episodes — the gap encoding fits train-family timing that does not
+  # transfer. Per BUILD_PLAN ("every block must earn its row"), it ships OFF;
+  # flip to true only with a new ablation row justifying it.
+  use_time2vec: false
 
 heads:
   attack_prob: true
