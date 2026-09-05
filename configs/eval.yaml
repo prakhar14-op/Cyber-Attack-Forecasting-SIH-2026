@@ -1,0 +1,24 @@
+# Evaluation harness configuration (M4).
+
+seed: 1337
+
+paths:
+  results_dir: results
+  plots_dir: results/plots
+
+# Alert thresholds are chosen from an FPR budget on the validation split —
+# never hardcoded in code (M8.1).
+fpr_budgets: [0.001, 0.01]          # 0.1% and 1% of host-windows
+
+# Forecast horizons (in windows) reported by the harness.
+horizons: [1, 4, 8]
+
+metrics:
+  # Lead time: first alert on the attacking host -> annotated attack completion.
+  # Undetected episodes count as 0 seconds, they are never dropped.
+  lead_time_undetected_seconds: 0
+  ece_bins: 15
+  bootstrap_resamples: 1000
+
+# Leave-one-attack-family-out generalisation mode (M4.6).
+holdout_families: [bot, dos, ddos, bruteforce, web, infiltration]

@@ -1,0 +1,102 @@
+# Data pipeline configuration.
+# Every path, seed and hyper-parameter lives in configs/ — modules read this file
+# through configs.loader.load_config and never hardcode a value.
+
+seed: 1337
+
+paths:
+  raw_dir: data/raw                 # gitignored; filled by data/download_cic.sh
+  interim_dir: data/interim
+  processed_dir: data/processed
+  artifacts_dir: artifacts          # persisted scalers/encoders live next to the weights
+  scaler: artifacts/scaler.pkl
+  feature_names: artifacts/feature_names.json
+  splits: data/splits.yaml
+  fixture_csv: tests/fixtures/mini.csv
+
+dataset:
+  name: cse-cic-ids2018
+  s3_bucket: s3://cse-cic-ids2018
+  s3_prefix: "Processed Traffic Data for ML Algorithms"
+  # Which days ship into the pipeline is the M1.4 decision task
+  # (docs/decisions/001-feature-source.md). Empty until that decision is taken.
+  days: []
+
+windows:
+  window_seconds: 15
+  stride_seconds: 5
+  max_sequence_windows: 48          # 4 min of context
+  forecast_horizon_windows: 8       # K = 8 -> 40 s ahead
+
+# The 7 stage classes. List order IS the label encoding — never reorder.
+stages:
+  - benign
+  - recon
+  - initial_access
+  - lateral_movement
+  - c2
+  - exfiltration
+  - impact
+
+# Unit of prediction is (source_host, window); the network-level score is the max
+# over host scores in the window.
+prediction_unit: source_host_window
+network_score_aggregation: max
+
+schema:
+  # canonical name -> raw CIC-IDS-2018 (CICFlowMeter) column.
+  # The loader strips whitespace from raw headers before applying this mapping
+  # and must survive repeated header rows, Inf/NaN rates and mixed timestamps (M1.2).
+  timestamp: Timestamp
+  src_ip: Src IP
+  dst_ip: Dst IP
+  src_port: Src Port
+  dst_port: Dst Port
+  protocol: Protocol
+  duration: Flow Duration
+  fwd_bytes: TotLen Fwd Pkts
+  bwd_bytes: TotLen Bwd Pkts
+  fwd_pkts: Tot Fwd Pkts
+  bwd_pkts: Tot Bwd Pkts
+  syn: SYN Flag Cnt
+  ack: ACK Flag Cnt
+  fin: FIN Flag Cnt
+  rst: RST Flag Cnt
+  psh: PSH Flag Cnt
+  urg: URG Flag Cnt
+  iat_mean: Flow IAT Mean
+  iat_std: Flow IAT Std
+  iat_max: Flow IAT Max
+  init_win_fwd: Init Fwd Win Byts
+  init_win_bwd: Init Bwd Win Byts
+  label: Label
+
+anonymisation:
+  method: hmac_sha256               # keyed HMAC pseudonyms; the key is never committed
+  key_env_var: SIH26_HMAC_KEY
+  per_epoch_permutation: true       # re-permute node ids every epoch (anti-memorisation)
+  node_features: role_only          # internal/external, /24 bucket, server-like port profile
+  heldout_attacker_ip_eval: false   # M1.7 evaluation mode switch
+
+packet_features:
+  # Output keyed on (src_ip, window_id); joins onto flow features (M2).
+  fields:
+    - ttl_mean
+    - ttl_var
+    - tcp_win_mean
+    - tcp_win_var
+    - frag_flag_count
+    - payload_hist_0
+    - payload_hist_1
+    - payload_hist_2
+    - payload_hist_3
+    - payload_hist_4
+    - payload_hist_5
+    - payload_hist_6
+    - payload_hist_7
+    - distinct_dst_ports
+    - sequential_port_ratio
+    - port_entropy
+    - retransmission_count
+  payload_hist_bin_edges: [0, 64, 128, 256, 512, 1024, 1460, 8192]
+  retransmission_backend: tshark    # tshark | scapy (must agree on the fixture)

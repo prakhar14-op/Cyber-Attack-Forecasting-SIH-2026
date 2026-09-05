@@ -1,0 +1,33 @@
+# RSSM world-model training configuration (M7).
+
+seed: 1337
+
+model:
+  deter_dim: 200          # deterministic (GRU) state
+  stoch_dim: 32           # stochastic latent (Tier 2)
+  hidden_dim: 200
+  decoder_dim: 128        # heads apply to the DECODED state, never raw h (M7.1)
+  tier: 1                 # 1 = deterministic transition; 2 = stochastic latent
+
+rollout:
+  # Filter over observed windows (posterior), then imagine with the prior —
+  # never start a rollout from zeros (M7.2).
+  horizon_k: 8
+  ensemble_samples: 20    # mean + band; disagreement is the second OOD signal
+
+loss:
+  # Supervised K-step dynamics loss, discounted 0.9^k (M7.4).
+  dynamics_discount: 0.9
+  kl_balance: 0.8
+  kl_free_bits: 1.0
+  w_dynamics: 1.0
+  w_kl: 1.0
+  w_reconstruction: 1.0
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.00001
+  batch_size: 32
+  epochs: 60
+  grad_clip: 100.0
+  early_stop_patience: 7

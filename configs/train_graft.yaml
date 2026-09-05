@@ -1,0 +1,35 @@
+# GRAFT encoder training configuration (M6).
+
+seed: 1337
+
+model:
+  d_model: 128
+  layers: 2
+  heads: 4
+  ffn_dim: 256
+  dropout: 0.1
+  causal: true            # the encoder is causal; bidirectional is a bug, not a choice
+  time2vec_dim: 8         # Time2Vec on inter-arrival time replaces sinusoidal PE
+
+heads:
+  attack_prob: true
+  stage_classes: 7        # must equal len(stages) in data.yaml
+  evidential: dirichlet   # Sensoy et al. 2018 — never Normal-Inverse-Gamma
+  reconstruction: true    # trained on benign windows only (masked loss) as the OOD signal
+
+loss:
+  # Composite loss weights (M6.5); class weights computed from the train split.
+  w_attack: 1.0
+  w_stage: 1.0
+  w_evidential: 1.0
+  w_reconstruction: 0.5
+  evidential_kl_anneal_epochs: 10
+  class_weighting: inverse_frequency
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.00001
+  batch_size: 64
+  epochs: 50
+  grad_clip: 1.0
+  early_stop_patience: 7

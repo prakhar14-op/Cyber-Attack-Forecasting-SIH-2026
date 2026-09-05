@@ -1,0 +1,28 @@
+# TGN training configuration (M5).
+
+seed: 1337
+
+model: tgn                # tgn | sage (GraphSAGE-per-window fallback, M5.4)
+
+tgn:
+  memory_dim: 100
+  time_dim: 100
+  embed_dim: 100
+  num_neighbors: 10       # last-neighbour loader size
+  msg_aggregator: last
+
+sage:
+  hidden_dim: 128
+  embed_dim: 100
+  num_layers: 2
+
+optim:
+  lr: 0.0005
+  weight_decay: 0.00001
+  batch_size: 200
+  epochs: 30
+  grad_clip: 1.0
+  early_stop_patience: 5
+
+# Memory is reset between splits — never carry train memory into test (M5.3).
+reset_memory_between_splits: true

@@ -1,0 +1,29 @@
+# Never commit model weights or captures (use GitHub Releases + SHA-256 in README)
+weights/
+*.pcap
+*.pcapng
+*.pt
+*.pth
+*.keras
+
+# Raw dataset downloads and derived artifacts
+data/raw/
+data/interim/
+data/processed/
+artifacts/
+results/
+
+# Offline wheel-house (rebuilt by scripts/build_vendor.ps1; too large for git)
+vendor/*.whl
+vendor/*.tar.gz
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
