@@ -20,6 +20,8 @@ dataset:
   s3_prefix: "Processed Traffic Data for ML Algorithms"
   # Which days ship into the pipeline is the M1.4 decision task
   # (docs/decisions/001-feature-source.md). Empty until that decision is taken.
+  # Entry shape: {date: "2018-02-20", csv: "<processed CSV filename in the bucket>"}
+  # (filenames are not derivable from dates — the bucket has typos like "Thuesday").
   days: []
 
 windows:
