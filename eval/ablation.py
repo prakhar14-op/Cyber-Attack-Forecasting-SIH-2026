@@ -49,8 +49,9 @@ def build_table(budget: float = 0.01, results_dir: Path | None = None) -> pd.Dat
     # `test` block and have their own presentation — the per-horizon table and
     # the negative-result note — so including them here renders spurious
     # all-zero rows. Drop them, and de-duplicate by (model, holdout) so a
-    # re-run variant (e.g. world_v2.json) cannot appear twice.
-    results = [r for r in results if "test" in r]
+    # re-run variant (e.g. world_v2.json) cannot appear twice. Runs tagged with
+    # '__' (harness --tag / gpu_experiments) are experiments, never shipped rows.
+    results = [r for r in results if "test" in r and "__" not in r.get("model", "")]
     seen: set = set()
     unique = []
     for r in results:

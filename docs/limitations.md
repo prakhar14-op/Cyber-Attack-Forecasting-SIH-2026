@@ -40,7 +40,7 @@ payload-size histogram, sequential-vs-random port-scan signature, retransmission
 
 The deployed engine therefore runs a flow-only model so a CSV still produces self-consistent
 forecasts, while the full model uses all 30 features from a PCAP. On the matched **validation**
-split the two are close — flow-only **0.837** vs full **0.788** AUROC (`artifacts/engine_threshold.json`),
+split the two are close — flow-only **0.847** vs full **0.806** AUROC (`artifacts/engine_threshold.json`),
 so the flow model is not worse there. We still recommend a PCAP not for a raw AUROC win but
 because only the PCAP path carries the packet-level features the PS itself mandates (TTL, TCP
 window, fragment flags, payload histogram, scan signature, retransmissions), and the headline

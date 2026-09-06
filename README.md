@@ -128,11 +128,11 @@ does not have. Verify at any time with `python scripts/verify_weights.py`.
 
 | artefact | SHA-256 |
 |---|---|
-| `engine_model.json` | `bba2d237a32488999473883bdf67469236f4fb71fad9c6c15af77d5e6aad278e` |
-| `engine_model_flow.json` | `efec13b6ec96697c4f50e4fd36a00a8c86813cc5ea2a10ea8dfbe9eba6bf9297` |
+| `engine_model.json` | `10f5873af8bda8758c2a78c859738d978620f3bd25508d66cd4daba77f2dfdc7` |
+| `engine_model_flow.json` | `b263d7aca6b5ae1414733e26b2d4ccb71dccdf35c241c78a9b1112e516840462` |
 | `tgn_encoder.pt` | `d228090cd0929e2c95ce23caab5e07ec7b30cf93a426241fd1263efba07348fe` |
 | `graft.pt` | `cca98b225b5ef4ca1abbb0246de0f66805a290aef02331a40a95c311f9c689cf` |
-| `window_scaler.pkl` | `af558b0e8906b70c453c9760011bce046ed07b5865566f809a48bf1c6ec44b9c` |
+| `window_scaler.pkl` | `5fa868fc75237310987df16c7c290593584c7daa410a5a60d69ee489a4d97292` |
 
 Regenerate from scratch (no weights needed):
 

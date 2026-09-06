@@ -50,7 +50,7 @@ def _percentile_rank(x: np.ndarray) -> np.ndarray:
     return rankdata(x) / len(x)
 
 
-def evaluate_fused(members: tuple[str, ...] = MEMBERS) -> dict:
+def evaluate_fused(members: tuple[str, ...] = MEMBERS, name: str | None = None) -> dict:
     cfg = load_config("data")
     cfg_eval = load_config("eval")
     dumps = [_load_member(m) for m in members]
@@ -74,7 +74,8 @@ def evaluate_fused(members: tuple[str, ...] = MEMBERS) -> dict:
     iso = IsotonicRegression(out_of_bounds="clip").fit(fused["val"], y["val"])
     prob = {s: iso.predict(fused[s]) for s in ("val", "test")}
 
-    name = "fused" if tuple(members) == MEMBERS else f"fused{len(members)}"
+    if name is None:
+        name = "fused" if tuple(members) == MEMBERS else f"fused{len(members)}"
     result = {"model": name, "horizon": 0, "holdout_family": None,
               "members": list(members), "test": {}, "val": {}}
     for budget in cfg_eval["fpr_budgets"]:
@@ -121,12 +122,15 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--name", default=None,
+                    help="output name for the fused run (default fused/fusedN); use a "
+                         "'__' tag, e.g. tgn_avg__exp, to keep it out of the shipped table")
     ap.add_argument("--members", default=",".join(MEMBERS),
                     help="comma-separated member models whose score dumps to fuse")
     args = ap.parse_args(argv)  # None -> sys.argv (module CLI); harness passes []
     members = tuple(m.strip() for m in args.members.split(",") if m.strip())
 
-    r = evaluate_fused(members)
+    r = evaluate_fused(members, name=args.name)
     t1 = r["test"]["fpr_0.01"]
     print(f"{r['model']}({'+'.join(members)}): test AUROC={r['test']['auroc']:.3f} "
           f"F1@1%={t1['f1']:.3f} recall={t1['recall']:.3f} "

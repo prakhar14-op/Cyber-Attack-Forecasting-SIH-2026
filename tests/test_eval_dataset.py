@@ -78,10 +78,15 @@ def test_ablation_table_excludes_horizon_results_and_dedupes(tmp_path):
     (tmp_path / "world.json").write_text(json.dumps({"model": "world", "horizons": {}}))
     (tmp_path / "world_v2.json").write_text(json.dumps({"model": "world", "horizons": {}}))
 
+    # a '__'-tagged run (harness --tag / gpu_experiments) is an experiment and
+    # must never appear as a shipped table row.
+    (tmp_path / "tgn__s1.json").write_text(json.dumps(_fake_result("tgn__s1", 0.9, 99, 2, 2)))
+
     table = ablation.build_table(budget=0.01, results_dir=tmp_path)
-    assert list(table["model"]) == ["xgb"], "only test-block results belong here"
+    assert list(table["model"]) == ["xgb"], "only untagged test-block results belong here"
     assert "forecast" not in list(table["model"])
     assert list(table["model"]).count("world") == 0
+    assert not any("__" in m for m in table["model"])
 
 
 def test_lstm_segment_chunking_covers_every_row_once():
