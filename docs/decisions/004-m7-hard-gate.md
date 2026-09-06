@@ -1,6 +1,32 @@
-# 004 — M7.7 hard gate: RSSM world model failed; forecasting works via the encoder — **AWAITING SIGN-OFF**
+# 004 — M7.7 hard gate: RSSM world model failed; forecasting works via the encoder — **RESOLVED**
 
-**Status: reported 2026-09-06, decision pending. `m7-rssm` is NOT tagged.**
+**Status: reported 2026-09-06; option 3 ("both") approved and executed. The encoder forecaster
+ships as `m7-forecast`; the RSSM fix-up was attempted and ALSO failed the gate (below), so the
+RSSM is not shipped and `m7-rssm` was never tagged.**
+
+## Fix-up attempt outcome (v2, configs/train_rssm_v2.yaml)
+
+The anti-collapse recipe — KL warm-up (0→1 over 6 epochs), free-bits 1.0→0.3, reconstruction
+weight 1.0→0.1, dynamics 1.0→3.0, epochs 6→15 — **markedly improved the ranking but did not
+clear the gate**:
+
+| | v1 | v2 | shipped forecaster |
+|---|---|---|---|
+| test AUROC k=1 | 0.604 | 0.788 | 0.893 |
+| test AUROC k=4 | 0.662 | 0.843 | **0.895** |
+| test AUROC k=8 | 0.683 | 0.851 | 0.890 |
+| episodes @1% FPR | 0/2 | 0/2 | **2/2** (to k=4) |
+| median lead | 0 s | 0 s | **3885 s** |
+
+Loss rebalancing recovered most of the ranking gap (k=8 AUROC 0.683 → 0.851), which confirms the
+v1 diagnosis: the 128-d reconstruction MSE really was starving the supervised dynamics term. But
+the posterior still collapses (raw KL 0.245–0.293 against a 0.3 floor), the ensemble band still
+does not widen (0.0003 → 0.0002), and **the operating point never recovers — 0/2 episodes and
+0 s lead at every horizon**. The RSSM remains worse than the encoder it consumes.
+
+**Verdict: the fallback stands.** The RSSM is a documented negative result, not a shipped
+component. The recipe above is recorded because it is the honest starting point for anyone
+resuming this line with a GPU and a longer schedule; on this CPU budget it does not earn its row.
 
 BUILD_PLAN M7.7 is the make-or-break gate: *"if the world model shows no lead-time advantage over
 XGBoost at k ≥ 4, stop and report before building anything else — the pitch changes."* It failed.
