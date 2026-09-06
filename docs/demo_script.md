@@ -42,7 +42,8 @@ Pick the top host in the triage table. Show the explanation panel.
 > this problem, so we made it impossible: a test fails the build if an explanation returns an
 > index instead of a feature name."
 
-Point at the MITRE technique and the flagged-flows table underneath.
+Point at the **top contributing windows** (when the attack was forming, seconds before the
+alert), the MITRE technique, and the flagged-flows table underneath.
 
 ### 1:00–1:20 — Forecasting ahead (the headline)
 

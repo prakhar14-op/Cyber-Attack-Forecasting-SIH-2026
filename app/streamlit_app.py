@@ -148,6 +148,14 @@ if hosts:
                 width="stretch",
             )
         with c2:
+            st.markdown("**Top contributing windows** (where the attack was forming)")
+            tw = exp.get("top_windows") or []
+            st.dataframe(
+                [{"seconds_before_alert": w["seconds_before_alert"],
+                  "probability": round(w["probability"], 3)} for w in tw]
+                or [{"note": "single-window alert"}],
+                width="stretch",
+            )
             st.markdown("**Flagged flows in this window**")
             st.dataframe(exp["flagged_flows"] or [{"note": "no flows in window"}],
                          width="stretch")

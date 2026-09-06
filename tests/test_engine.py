@@ -95,3 +95,17 @@ def test_pcap_input_uses_full_features_and_verifies(tmp_path):
     assert max(f["probability"] for f in result["forecasts"]) > 0.5
     ok, first_bad = verify_cli.verify(tmp_path / "audit_chain.jsonl")
     assert ok, f"ledger failed at {first_bad}"
+
+
+def test_top_contributing_windows_ranks_and_bounds_context():
+    """M8.3: top windows are the host's highest-probability windows within the
+    context leading up to the alert, with seconds-before-alert."""
+    from engine.predict import _top_contributing_windows
+
+    # (window_start, prob); alert at 100, context 60s -> windows 40..100 only
+    hist = [(20, 0.9), (45, 0.3), (60, 0.95), (80, 0.6), (100, 0.7), (120, 0.99)]
+    top = _top_contributing_windows(hist, alert_ws=100, context_seconds=60, k=3)
+    assert [w["window_start"] for w in top] == [60, 100, 80], "ranked by prob, in-context"
+    assert top[0]["seconds_before_alert"] == 40 and top[1]["seconds_before_alert"] == 0
+    # the future window (120) and the out-of-context one (20) are excluded
+    assert all(40 <= w["window_start"] <= 100 for w in top)

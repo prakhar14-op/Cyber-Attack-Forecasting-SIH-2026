@@ -53,8 +53,8 @@ recorded as a negative result (`docs/decisions/004`, `docs/limitations.md` §4).
 `engine/predict.py` runs fully offline from persisted artefacts: it builds features from the
 input file, scores each host-window against a threshold **fitted from an FPR budget on
 validation** (never a literal), and for each alert emits a JSON-schema-validated object:
-probability, stage, MITRE technique, top-5 **named** features, and the flagged flows in that
-window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
+probability, stage, MITRE technique, top-5 **named** features, the top-3 contributing windows
+(where the attack was forming), and the flagged flows in that window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
 statement rules out black-box output, so explanations name `payload_hist_0` or
 `distinct_dst_ips`, never an embedding index. `engine/technique_map.yaml` maps stage + observed
 pattern to techniques actually evidenced in our data (internal scan → **T1046**, credential

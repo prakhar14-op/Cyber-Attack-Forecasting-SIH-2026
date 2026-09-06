@@ -26,7 +26,7 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M6 GRAFT | done (`m6-graft`) — causal encoder, test_no_future_leakage green; Time2Vec ablated OFF |
 | M7 world model | done (`m7-forecast`) — RSSM failed the hard gate (decision 004); ships encoder forecasting at horizon k |
 
-| M8 engine + explainability | functional — offline predict → SHAP named-feature explanations → MITRE technique → ledger; **8.3 attention-over-windows and 8.7 what-if not yet built** (untagged) |
+| M8 engine + explainability | done (`m8-engine`) — offline predict → SHAP named features → top contributing windows (8.3) → MITRE technique → what-if → ledger; JSON-schema-validated output |
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
 | M10 offline app | done (`m10-app`) — Streamlit demo: upload → timeline → named-feature explanations → what-if → ledger verify/tamper → results card; telemetry disabled |
 | M11 lab capture | kit ready (capture.sh, scenarios, label_capture, consent); real capture needs hardware — **untagged**. A bundled *synthetic* demo PCAP stands in for the app |

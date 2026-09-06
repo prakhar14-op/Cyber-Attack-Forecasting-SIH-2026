@@ -40,6 +40,10 @@ OUTPUT_SCHEMA = {
             "required": ["feature", "value", "contribution"],
             "properties": {"feature": {"type": "string"}},
         }},
+        "top_windows": {"type": "array", "items": {
+            "type": "object",
+            "required": ["window_start", "probability", "seconds_before_alert"],
+        }},
         "flagged_flows": {"type": "array"},
         "estimated_lead_seconds": {"type": ["number", "null"]},
     },
@@ -149,9 +153,20 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
     cp_path.unlink(missing_ok=True)
     ledger = Ledger(chain_path, checkpoint_path=cp_path)
 
+    # M8.3: per-host (window_start, probability) history for the top-contributing
+    # -windows view — for an alert at window t, the recent windows of that host
+    # whose own forecast was strongest (the deployed model is per-window; the
+    # transformer's true attention is in the research GRAFT model).
+    host_hist: dict[str, list[tuple[float, float]]] = {}
+    hosts_arr = wf["host"].astype(str).to_numpy()
+    ws_arr = wf["window_start"].to_numpy(dtype=float)
+    for h, s, p in zip(hosts_arr, ws_arr, probs):
+        host_hist.setdefault(h, []).append((float(s), float(p)))
+
     forecasts = []
     alert_rows = np.flatnonzero(probs >= threshold)
     tops = explainer.top_features(X[alert_rows], k=5) if len(alert_rows) else []
+    max_ctx = cfg["windows"]["max_sequence_windows"] * cfg["windows"]["stride_seconds"]
     for local_i, row in enumerate(alert_rows):
         host = str(wf.iloc[row]["host"])
         ws = float(wf.iloc[row]["window_start"])
@@ -160,6 +175,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
         # from the observed pattern via the technique rules' parent stage guess.
         stage = _infer_stage(feats, stages)
         tech = EX.map_technique(stage, feats)
+        top_windows = _top_contributing_windows(host_hist[host], ws, max_ctx)
         obj = {
             "host": host,
             "window_start": ws,
@@ -168,6 +184,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
             "technique": tech["technique"],
             "technique_name": tech["name"],
             "top_features": tops[local_i],
+            "top_windows": top_windows,
             "flagged_flows": EX.flagged_flows(flows, host, ws, window_sec),
             "estimated_lead_seconds": None,
         }
@@ -185,6 +202,22 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
         "forecasts": forecasts,
         "threshold": threshold,
     }
+
+
+def _top_contributing_windows(history, alert_ws: float, context_seconds: float, k: int = 3):
+    """The k windows of this host, within `context_seconds` up to and including
+    the alert window, whose own forecast probability was highest (M8.3).
+
+    history: [(window_start, probability), ...] for one host. Returns
+    [{window_start, probability, seconds_before_alert}] newest-first ties broken
+    by recency — the windows an analyst should look at to see the attack forming.
+    """
+    ctx = [(s, p) for (s, p) in history if alert_ws - context_seconds <= s <= alert_ws]
+    ctx.sort(key=lambda sp: (-sp[1], -sp[0]))
+    return [
+        {"window_start": s, "probability": p, "seconds_before_alert": round(alert_ws - s)}
+        for s, p in ctx[:k]
+    ]
 
 
 def _infer_stage(feats: dict, stages: list[str]) -> str:
