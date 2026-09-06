@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from configs import load_config, resolve_path  # noqa: E402
 
-TRACKED = ["engine_model.json", "tgn_encoder.pt", "graft.pt", "window_scaler.pkl"]
+TRACKED = ["engine_model.json", "engine_model_flow.json", "tgn_encoder.pt",
+           "graft.pt", "window_scaler.pkl"]
 
 
 def sha256_file(path: Path) -> str:

@@ -183,6 +183,32 @@ def build_host_sequences(window_features: pd.DataFrame, cfg: dict) -> dict[str, 
     return result
 
 
+def window_features_from_packet_windows(
+    cfg: dict, packet_windows: pd.DataFrame, anonymizer=None
+) -> pd.DataFrame:
+    """Full 30-feature matrix from an in-memory packet-window table (engine PCAP
+    path). Same as build_window_features but for a table already in memory
+    rather than parquet on disk."""
+    pw = packet_windows.rename(columns={"src_ip": "host"}).copy()
+    feat_numeric = list(cfg["packet_features"]["fields"]) + list(
+        cfg["packet_features"]["sent_fields"])
+    for c in feat_numeric:
+        if c not in pw:
+            pw[c] = 0.0
+    pw[feat_numeric] = pw[feat_numeric].fillna(0.0)
+    stride = cfg["windows"]["stride_seconds"]
+    pw["window_start"] = pw["window_id"].astype("int64") * stride
+    pw["day"] = "input"
+    if anonymizer is not None:
+        pw["internal"] = pw["host"].map(lambda ip: int(anonymizer.is_internal(ip)))
+        pw["net24_bucket"] = pw["host"].map(anonymizer.net24_bucket)
+    else:
+        pw["internal"] = 0
+        pw["net24_bucket"] = 0
+    ordered = _META_COLS + feature_columns(cfg)
+    return pw[ordered].sort_values(["host", "window_id"], kind="stable").reset_index(drop=True)
+
+
 def window_features_from_flows(cfg: dict, flows: pd.DataFrame, anonymizer=None) -> pd.DataFrame:
     """Per-(source_host, window) features from a FLOW table (engine CSV path).
 

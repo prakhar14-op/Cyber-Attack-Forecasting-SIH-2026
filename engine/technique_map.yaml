@@ -32,9 +32,9 @@ c2:
   name: Command and Control
 
 exfiltration:
-  default: T1041    # Exfiltration Over C2 Channel (lab-capture only)
+  default: T1041    # Exfiltration Over C2 Channel
   rules:
-    - when: {sent_bytes_gt: 1000000}
+    - when: {sent_bytes_gt: 50000}   # windowed: a bulk outbound transfer in 15 s
       technique: T1048
       name: Exfiltration Over Alternative Protocol (large outbound transfer)
 

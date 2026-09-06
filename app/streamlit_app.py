@@ -51,13 +51,17 @@ col_a, col_b = st.columns([2, 1])
 with col_a:
     uploaded = st.file_uploader("Upload a flow CSV or a PCAP", type=["csv", "pcap", "pcapng"])
 with col_b:
-    use_sample = st.button("Use the bundled sample")
+    use_pcap = st.button("Demo: synthetic PCAP (full features)")
+    use_csv = st.button("Demo: sample CSV (flow only)")
 
+_synth = resolve_path("app/assets/synthetic_demo.pcap")
 input_path = None
 if uploaded is not None:
     input_path = _session_dir() / uploaded.name
     input_path.write_bytes(uploaded.getbuffer())
-elif use_sample:
+elif use_pcap and _synth.exists():
+    input_path = _synth
+elif use_csv:
     input_path = resolve_path(CFG["paths"]["fixture_csv"])
 
 if input_path is not None:
@@ -69,6 +73,13 @@ if not input_path:
     st.stop()
 
 st.success(f"Input: `{Path(input_path).name}`")
+if "synthetic_demo" in str(input_path):
+    st.info(
+        "This is a **synthetic, illustrative** capture (not real data, never used for any "
+        "reported metric) — it walks the full kill chain so the demo can show lateral movement "
+        "and exfiltration, which no public dataset contains. See app/assets/README.md.",
+        icon="🧪",
+    )
 if str(input_path).endswith(".csv"):
     st.warning(
         "CSV input carries flow features only — the packet-level features "

@@ -1,0 +1,8 @@
+session_id	synthetic-demo
+iface	synthetic
+# columns: stage	start	end	attacker_ip	victim_ip
+benign	08:53:20	08:55:20		
+recon	08:55:30	08:56:30	203.0.113.7	10.20.0.10
+initial_access	08:56:40	08:57:40	203.0.113.7	10.20.0.10
+lateral_movement	08:57:50	08:58:40	10.20.0.10	10.20.0.20
+exfiltration	08:58:50	08:59:50	10.20.0.10	203.0.113.7

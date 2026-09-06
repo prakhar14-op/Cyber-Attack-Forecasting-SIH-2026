@@ -46,7 +46,11 @@ OUTPUT_SCHEMA = {
 }
 
 
-def _load_engine(cfg):
+def _is_pcap(path) -> bool:
+    return str(path).lower().endswith((".pcap", ".pcapng"))
+
+
+def _load_engine(cfg, variant: str):
     import pickle
 
     import xgboost as xgb
@@ -54,7 +58,8 @@ def _load_engine(cfg):
     from engine import thresholds as TH
 
     art = resolve_path(cfg["paths"]["artifacts_dir"])
-    model_path = art / "engine_model.json"
+    fname = TH.load_model_spec(cfg, variant)["file"]
+    model_path = art / fname
     if not model_path.exists():
         raise FileNotFoundError(
             f"{model_path} missing — run `python -m engine.train_engine` first (M8.1)"
@@ -63,14 +68,30 @@ def _load_engine(cfg):
     booster.load_model(str(model_path))
     with open(art / "window_scaler.pkl", "rb") as fh:
         scaler = pickle.load(fh)
-    return booster, scaler
+    return booster, scaler, fname
 
 
-def _windows_from_input(cfg, csv_path, anonymizer):
+def _windows_from_input(cfg, input_path, anonymizer):
+    """(flows, window_features). PCAP -> full extractor (all 30 features);
+    CSV -> flow-derived features (packet-stats absent, decision 001)."""
     from data import flow_features as FF
     from data import windows as W
 
-    flows = FF.load_canonical(cfg, csv_path)
+    if _is_pcap(input_path):
+        from data import packet_features as pf
+
+        packets = pf.extract_packet_table(input_path, cfg)
+        pkt_win = pf.packet_window_features(packets, cfg)
+        pkt_win, _ = pf.apply_retransmission_backend(pkt_win, input_path, cfg)
+        pkt_win = pkt_win.merge(pf.sent_window_features(packets, cfg),
+                                on=["src_ip", "window_id"], how="outer")
+        flows = pf.assemble_flows(packets, cfg)
+        # windows.py's per-parquet loader expects files on disk; build the
+        # feature frame directly from the in-memory packet-window table.
+        wf = W.window_features_from_packet_windows(cfg, pkt_win, anonymizer=anonymizer)
+        return flows, wf
+
+    flows = FF.load_canonical(cfg, input_path)
     wf = W.window_features_from_flows(cfg, flows, anonymizer=anonymizer)
     return flows, wf
 
@@ -89,9 +110,10 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
     from engine import thresholds as TH
     from ledger.ledger import Ledger
 
+    variant = "full" if _is_pcap(csv_path) else "flow"
     anonymizer = _maybe_anonymizer(cfg)
-    booster, scaler = _load_engine(cfg)
-    threshold = TH.load_threshold(cfg, fpr_budget)
+    booster, scaler, model_file = _load_engine(cfg, variant)
+    threshold = TH.load_threshold(cfg, fpr_budget, variant=variant)
 
     # M9.3: bind this batch to exact weights — refuse to log on mismatch, so a
     # ledger entry can never claim provenance it does not have.
@@ -101,7 +123,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
     _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
     import verify_weights as VW
 
-    ok, offender = VW.verify(cfg, names=["engine_model.json", "window_scaler.pkl"])
+    ok, offender = VW.verify(cfg, names=[model_file, "window_scaler.pkl"])
     if not ok:
         raise RuntimeError(
             f"model-weight SHA-256 mismatch ({offender}) — refusing to write ledger "
@@ -159,13 +181,22 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
 
 
 def _infer_stage(feats: dict, stages: list[str]) -> str:
-    """Coarse stage from named-feature pattern (the engine model is binary;
-    stage granularity comes from the interpretable rules)."""
-    if feats.get("sent_bytes", 0) > 1_000_000 and feats.get("distinct_dst_ips", 0) <= 2:
+    """Coarse stage from the named-feature pattern within a 15 s WINDOW (the
+    engine model is binary; stage granularity comes from interpretable rules).
+    Thresholds are windowed, not per-flow. The heuristic is deliberately simple
+    and its limits are documented in docs/limitations.md."""
+    syn = feats.get("syn", 0)
+    distinct_ports = feats.get("distinct_dst_ports", 0)
+    distinct_ips = feats.get("distinct_dst_ips", 0)
+    # bulk outbound to a single peer, few SYNs (an established transfer, not a scan)
+    if feats.get("sent_bytes", 0) > 50_000 and distinct_ips <= 2 and syn < 10:
         return "exfiltration"
-    if feats.get("distinct_dst_ips", 0) > 20 or feats.get("sequential_port_ratio", 0) > 0.5:
-        return "recon"
-    if feats.get("syn", 0) > 50 and feats.get("ack", 0) < feats.get("syn", 0):
+    # a sweep: many ports OR a strongly sequential scan signature
+    if distinct_ports > 20 or feats.get("sequential_port_ratio", 0) > 0.5:
+        # a scan sourced from an internal host toward another internal host reads
+        # as lateral movement; from outside as reconnaissance
+        return "lateral_movement" if feats.get("internal", 0) == 1 else "recon"
+    if syn > 30 and feats.get("ack", 0) < syn:
         return "initial_access"
     if feats.get("sent_pkts", 0) > 500:
         return "impact"

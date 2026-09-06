@@ -27,3 +27,7 @@ __pycache__/
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+# The synthetic demo capture IS bundled (small, deterministic, illustrative —
+# regenerable via `python -m capture.make_synthetic_demo`). NOT real capture data.
+!app/assets/synthetic_demo.pcap

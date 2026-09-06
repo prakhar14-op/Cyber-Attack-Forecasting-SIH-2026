@@ -24,15 +24,27 @@ def persist_threshold(cfg: dict, thresholds: dict) -> str:
     return str(path)
 
 
-def load_threshold(cfg: dict, fpr_budget: float) -> float:
+def _load(cfg: dict) -> dict:
     path = threshold_path(cfg)
     if not path.exists():
         raise FileNotFoundError(
             f"{path} missing — run `python -m engine.train_engine` to fit and "
-            "persist the operating threshold (M8.1)"
+            "persist the engine models + thresholds (M8.1)"
         )
-    data = json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_model_spec(cfg: dict, variant: str) -> dict:
+    """{'file', 'val_auroc', 'fpr_<b>': thr} for 'full' (PCAP) or 'flow' (CSV)."""
+    data = _load(cfg)
+    if variant not in data:
+        raise KeyError(f"no '{variant}' engine model persisted; have {sorted(data)}")
+    return data[variant]
+
+
+def load_threshold(cfg: dict, fpr_budget: float, variant: str = "full") -> float:
+    spec = load_model_spec(cfg, variant)
     key = f"fpr_{fpr_budget}"
-    if key not in data:
-        raise KeyError(f"no persisted threshold for {key}; have {sorted(data)}")
-    return float(data[key])
+    if key not in spec:
+        raise KeyError(f"no persisted threshold for {variant}/{key}; have {sorted(spec)}")
+    return float(spec[key])

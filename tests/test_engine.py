@@ -73,3 +73,25 @@ def test_predict_file_produces_explained_forecasts_and_verifiable_ledger(fixture
     assert "172.31." not in text and "192.168." not in text
     ok, first_bad = verify_cli.verify(chain)
     assert ok, f"ledger failed verification at {first_bad}"
+
+
+@pytest.mark.skipif(
+    not (importlib.util.find_spec("xgboost")
+         and __import__("configs").resolve_path("artifacts/engine_model.json").exists()
+         and __import__("configs").resolve_path("app/assets/synthetic_demo.pcap").exists()),
+    reason="engine model or synthetic demo pcap not built",
+)
+def test_pcap_input_uses_full_features_and_verifies(tmp_path):
+    """The engine's PCAP path runs the full extractor (real packet features) and
+    produces meaningful, non-degenerate forecasts + a verifiable ledger."""
+    from configs import resolve_path
+    from engine import predict
+    from ledger import verify_cli
+
+    pcap = resolve_path("app/assets/synthetic_demo.pcap")
+    result = predict.predict_file(pcap, out_dir=tmp_path)
+    assert result["forecasts"], "PCAP path produced no forecasts"
+    # a PCAP has real packet features, so at least one alert is confidently high
+    assert max(f["probability"] for f in result["forecasts"]) > 0.5
+    ok, first_bad = verify_cli.verify(tmp_path / "audit_chain.jsonl")
+    assert ok, f"ledger failed at {first_bad}"
