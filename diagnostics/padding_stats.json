@@ -1,0 +1,11 @@
+{
+  "seg_len_config": 48,
+  "n_train_rows": 2223943,
+  "n_segments": 65089,
+  "overall_padding_pct": 28.82,
+  "segments_full_48": 63.35,
+  "segments_gt50pct_pad": 31.48,
+  "median_real_len": 48.0,
+  "mean_real_len": 34.17,
+  "p10_real_len": 3.0
+}
