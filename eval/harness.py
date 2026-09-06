@@ -28,6 +28,31 @@ from eval import metrics as M
 from models import baselines
 
 
+def _dump_scores(cfg_eval, model_name, holdout, evals, scores) -> None:
+    """Phase-0 instrumentation: persist per-(host, window) val/test scores so the
+    threshold-transfer diagnosis and Phase-1 calibration can work on the real
+    score arrays without re-running the model. Written under results/scores/
+    (gitignored, offline)."""
+    out = resolve_path(cfg_eval["paths"]["results_dir"]) / "scores"
+    out.mkdir(parents=True, exist_ok=True)
+    suffix = f"_holdout-{holdout}" if holdout else ""
+    payload = {}
+    for name, split in evals.items():
+        payload[f"{name}_y"] = np.asarray(split.y)
+        payload[f"{name}_score"] = np.asarray(scores[name], dtype=float)
+        payload[f"{name}_host"] = np.asarray(split.host).astype(str)
+        payload[f"{name}_ws"] = np.asarray(split.window_start, dtype=float)
+    np.savez(out / f"{model_name}{suffix}.npz", **payload)
+
+
+def _dump_curve(name: str, curves: dict) -> None:
+    """Phase-0 instrumentation: persist per-epoch training loss curves so under-
+    vs over-fitting is diagnosable from artefacts, not just stdout."""
+    out = resolve_path(load_config("eval")["paths"]["results_dir"]) / "curves"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}.json").write_text(json.dumps(curves, indent=2), encoding="utf-8")
+
+
 def _flat_scores(model_name, cfg_b, train, evals):
     """Train a per-window model (lr/xgb) and score each eval Split."""
     model = baselines.build_model(model_name, cfg_b).fit(train.X, train.y)
@@ -126,11 +151,14 @@ def _tgn_scores(cfg, train_split, eval_splits):
 
     # per-epoch node permutation: rebuild events (ids) each epoch; memory resets
     # inside train_link_pred at every epoch start.
+    tgn_curve = []
     for epoch in range(cfg_t["link_pred"]["epochs"]):
         events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
         one_epoch = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
         losses = T.train_link_pred(encoder, events, one_epoch)
+        tgn_curve.append(float(losses[0]))
         print(f"tgn link-pred epoch {epoch}: loss {losses[0]:.4f}", flush=True)
+    _dump_curve("tgn", {"tgn_link_pred": tgn_curve})
 
     # ---- head fit on train snapshot embeddings (subsampled benign) ----
     rng = np.random.RandomState(cfg_t["seed"])
@@ -218,10 +246,12 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
         num_nodes=pd.concat([train_flows["src_ip"], train_flows["dst_ip"]]).nunique(),
         msg_dim=len(msg_scaler.mean_),
     )
+    tgn_curve = []
     for epoch in range(cfg_t["link_pred"]["epochs"]):
         events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
         one = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
         loss = T.train_link_pred(encoder, events, one)[0]
+        tgn_curve.append(float(loss))
         print(f"tgn link-pred epoch {epoch}: loss {loss:.4f}", flush=True)
 
     def tgn_embeddings(split, split_name):
@@ -264,6 +294,7 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
     g = torch.Generator().manual_seed(cfg_g["seed"])
 
     model.train()
+    graft_curve = []
     for epoch in range(cfg_g["optim"]["epochs"]):
         perm = torch.randperm(n, generator=g)
         tot = 0.0
@@ -283,7 +314,10 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_g["optim"]["grad_clip"])
             opt.step()
             tot += float(loss.detach())
-        print(f"graft epoch {epoch}: loss {tot / max(1, n // bs):.4f}", flush=True)
+        graft_curve.append(tot / max(1, n // bs))
+        print(f"graft epoch {epoch}: loss {graft_curve[-1]:.4f}", flush=True)
+    _dump_curve("tgn_graft_no_time2vec" if ablate_time2vec else "tgn_graft",
+                {"tgn_link_pred": tgn_curve, "graft": graft_curve})
 
     from configs import resolve_path
 
@@ -341,6 +375,8 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
         scores = _tgn_graft_scores(cfg, train, evals, ablate_time2vec=True)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
+
+    _dump_scores(cfg_eval, model_name, holdout_family, evals, scores)
 
     # Threshold(s) from validation benign; applied to test.
     result = {"model": model_name, "horizon": 0, "holdout_family": holdout_family,
