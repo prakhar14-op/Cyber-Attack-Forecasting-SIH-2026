@@ -90,8 +90,13 @@ if str(input_path).endswith(".csv"):
     )
 
 # ---------------------------------------------------------------- run
-with st.spinner("Running the offline pipeline (features → forecast → explanations → ledger)…"):
-    result = panels.run_pipeline(input_path, _session_dir())
+# Cache the result per input so interacting with widgets (tamper, what-if,
+# re-verify) does NOT re-run the pipeline and re-append to the ledger.
+if st.session_state.get("ran_for") != str(input_path):
+    with st.spinner("Running the offline pipeline (features → forecast → explanations → ledger)…"):
+        st.session_state.result = panels.run_pipeline(input_path, _session_dir())
+        st.session_state.ran_for = str(input_path)
+result = st.session_state.result
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Flows", f"{result['n_flows']:,}")

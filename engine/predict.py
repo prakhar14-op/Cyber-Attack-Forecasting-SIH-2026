@@ -140,7 +140,14 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
     window_sec = cfg["windows"]["window_seconds"]
     stages = cfg["stages"]
 
-    ledger = Ledger(out_dir / "audit_chain.jsonl", checkpoint_path=out_dir / "checkpoints.jsonl")
+    # A run analyses ONE file -> a fresh chain. (A long-lived deployment would
+    # append across batches; the file-analysis engine starts clean so re-running
+    # the same file does not grow a stale chain.)
+    chain_path = out_dir / "audit_chain.jsonl"
+    cp_path = out_dir / "checkpoints.jsonl"
+    chain_path.unlink(missing_ok=True)
+    cp_path.unlink(missing_ok=True)
+    ledger = Ledger(chain_path, checkpoint_path=cp_path)
 
     forecasts = []
     alert_rows = np.flatnonzero(probs >= threshold)
