@@ -50,29 +50,33 @@ def _percentile_rank(x: np.ndarray) -> np.ndarray:
     return rankdata(x) / len(x)
 
 
-def evaluate_fused() -> dict:
+def evaluate_fused(members: tuple[str, ...] = MEMBERS) -> dict:
     cfg = load_config("data")
     cfg_eval = load_config("eval")
-    dumps = {m: _load_member(m) for m in MEMBERS}
+    dumps = [_load_member(m) for m in members]
 
-    a, b = (dumps[m] for m in MEMBERS)
-    for split in ("val", "test"):
-        if not np.array_equal(a[f"{split}_y"], b[f"{split}_y"]):
-            raise RuntimeError(f"member dumps disagree on the {split} rows — re-run both members")
+    ref = dumps[0]
+    for m, d in zip(members[1:], dumps[1:]):
+        for split in ("val", "test"):
+            if not np.array_equal(ref[f"{split}_y"], d[f"{split}_y"]):
+                raise RuntimeError(
+                    f"member dumps disagree on the {split} rows ({members[0]} vs {m}) "
+                    "— re-run the members under the same key")
 
-    fused = {s: (_percentile_rank(a[f"{s}_score"]) + _percentile_rank(b[f"{s}_score"])) / 2
+    fused = {s: np.mean([_percentile_rank(d[f"{s}_score"]) for d in dumps], axis=0)
              for s in ("val", "test")}
-    y = {s: a[f"{s}_y"] for s in ("val", "test")}
-    host = {s: a[f"{s}_host"] for s in ("val", "test")}
-    ws = {s: a[f"{s}_ws"] for s in ("val", "test")}
+    y = {s: ref[f"{s}_y"] for s in ("val", "test")}
+    host = {s: ref[f"{s}_host"] for s in ("val", "test")}
+    ws = {s: ref[f"{s}_ws"] for s in ("val", "test")}
 
     # calibrated probability (VAL-fit isotonic; monotonic -> ranking unchanged)
     from sklearn.isotonic import IsotonicRegression
     iso = IsotonicRegression(out_of_bounds="clip").fit(fused["val"], y["val"])
     prob = {s: iso.predict(fused[s]) for s in ("val", "test")}
 
-    result = {"model": "fused", "horizon": 0, "holdout_family": None,
-              "members": list(MEMBERS), "test": {}, "val": {}}
+    name = "fused" if tuple(members) == MEMBERS else f"fused{len(members)}"
+    result = {"model": name, "horizon": 0, "holdout_family": None,
+              "members": list(members), "test": {}, "val": {}}
     for budget in cfg_eval["fpr_budgets"]:
         thr = M.threshold_at_fpr(y["val"], fused["val"], budget)
         for s in ("val", "test"):
@@ -105,18 +109,26 @@ def evaluate_fused() -> dict:
     out_dir = resolve_path(cfg_eval["paths"]["results_dir"])
     scores_dir = out_dir / "scores"
     scores_dir.mkdir(parents=True, exist_ok=True)
-    np.savez(scores_dir / "fused.npz",
+    np.savez(scores_dir / f"{name}.npz",
              **{f"{s}_{k}": v for s in ("val", "test")
                 for k, v in (("y", y[s]), ("score", fused[s]),
                              ("host", host[s]), ("ws", ws[s]))})
-    (out_dir / "fused.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    (out_dir / f"{name}.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 
-def main() -> int:
-    r = evaluate_fused()
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--members", default=",".join(MEMBERS),
+                    help="comma-separated member models whose score dumps to fuse")
+    args = ap.parse_args(argv)  # None -> sys.argv (module CLI); harness passes []
+    members = tuple(m.strip() for m in args.members.split(",") if m.strip())
+
+    r = evaluate_fused(members)
     t1 = r["test"]["fpr_0.01"]
-    print(f"fused({'+'.join(MEMBERS)}): test AUROC={r['test']['auroc']:.3f} "
+    print(f"{r['model']}({'+'.join(members)}): test AUROC={r['test']['auroc']:.3f} "
           f"F1@1%={t1['f1']:.3f} recall={t1['recall']:.3f} "
           f"lead={t1['lead_time_median']:.0f}s "
           f"({t1['episodes_detected']}/{t1['episodes_total']} episodes) "

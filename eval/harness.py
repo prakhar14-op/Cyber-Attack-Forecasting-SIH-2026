@@ -440,7 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.model == "fused":  # rank-mean fusion of tgn+xgb (reads their score dumps)
         from eval import fused
 
-        return fused.main()
+        return fused.main([])
 
     result = evaluate(args.model, args.holdout_family)
 
