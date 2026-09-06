@@ -96,6 +96,50 @@ def test_what_if_on_pcap_input_stays_on_full_path(tmp_path):
     assert after["n_alerts"] < result["n_alerts"], "the top host drove alerts"
 
 
+def test_pipeline_result_carries_a_host_graph(run):
+    """M10.8: predict_file attaches a nodes+edges host graph for the 3D view."""
+    result, _ = run
+    g = result.get("graph")
+    assert g and g["nodes"], "result must carry a host graph"
+    assert all({"ip", "peak_prob", "n_alerts"} <= set(n) for n in g["nodes"])
+    assert all({"src", "dst", "weight", "risk"} <= set(e) for e in g["edges"])
+
+
+def test_network_graph_layout_positions_edges_and_ranks():
+    """M10.8: the 3D layout assigns coordinates, keeps edge risk, is deterministic,
+    and trims to the highest-risk hosts without silently hiding the count."""
+    result = {"graph": {
+        "nodes": [
+            {"ip": "10.0.0.1", "peak_prob": 0.90, "n_alerts": 3, "internal": 1},
+            {"ip": "10.0.0.2", "peak_prob": 0.00, "n_alerts": 0, "internal": 1},
+            {"ip": "8.8.8.8", "peak_prob": 0.00, "n_alerts": 0, "internal": 0},
+        ],
+        "edges": [
+            {"src": "10.0.0.1", "dst": "10.0.0.2", "weight": 5, "risk": 0.90},
+            {"src": "10.0.0.1", "dst": "8.8.8.8", "weight": 2, "risk": 0.90},
+        ],
+    }}
+    layout = panels.network_graph_layout(result)
+    assert layout["shown"] == 3 and not layout["truncated"]
+    for n in layout["nodes"]:
+        assert all(isinstance(n[c], float) for c in ("x", "y", "z"))
+    for e in layout["edges"]:
+        assert {"x0", "y0", "z0", "x1", "y1", "z1"} <= set(e)
+    assert any(e["risk"] == 0.90 for e in layout["edges"])
+    # deterministic under the fixed seed
+    again = panels.network_graph_layout(result)
+    assert [n["x"] for n in layout["nodes"]] == [n["x"] for n in again["nodes"]]
+
+    # trimming reports what it dropped
+    many = {"graph": {
+        "nodes": [{"ip": f"10.0.0.{i}", "peak_prob": i / 100, "n_alerts": 0,
+                   "internal": 1} for i in range(1, 91)],
+        "edges": [],
+    }}
+    trimmed = panels.network_graph_layout(many, max_nodes=60)
+    assert trimmed["shown"] == 60 and trimmed["total"] == 90 and trimmed["truncated"]
+
+
 def test_results_card_reads_from_results_dir():
     """M10.6: the card is generated from results/*.json, not hardcoded."""
     fh = panels.forecast_horizons()

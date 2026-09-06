@@ -26,6 +26,7 @@ Exact pinned versions live in `requirements.txt` / `environment.lock.yml`.
 | captum | BSD-3-Clause | Pinned but not currently imported — the shipped explainer is TreeSHAP (shap); kept as an alternative gradient-based explainer |
 | shap | MIT | TreeSHAP named-feature attributions on the deployed model (`engine/explain.py`) |
 | streamlit | Apache-2.0 | Offline demo app |
+| plotly | MIT | Interactive 3D network-graph panel (rendered by st.plotly_chart, which serves plotly.js from Streamlit's bundled assets — no CDN) |
 | altair | BSD-3-Clause | Transitive Streamlit dependency; the app renders charts with matplotlib (server-side, no CDN), not altair |
 | matplotlib | PSF-based (matplotlib licence) | Evaluation plots |
 | PyYAML | MIT | Config files |

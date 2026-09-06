@@ -39,6 +39,70 @@ def _fmt_threshold(x: float) -> str:
     return f"{x:.4f}" if abs(x) >= 1e-3 else f"{x:.2e}"
 
 
+def _network_figure(layout: dict):
+    """Plotly 3D figure of the host graph (M10.8). Rendered by st.plotly_chart,
+    which serves plotly.js from Streamlit's own assets — no CDN, stays offline."""
+    import plotly.graph_objects as go
+
+    nodes, edges = layout["nodes"], layout["edges"]
+    alerting = {n["ip"] for n in nodes if n["n_alerts"] > 0}
+
+    def _segments(es):
+        xs, ys, zs = [], [], []
+        for e in es:
+            xs += [e["x0"], e["x1"], None]
+            ys += [e["y0"], e["y1"], None]
+            zs += [e["z0"], e["z1"], None]
+        return xs, ys, zs
+
+    risky = [e for e in edges if e["src"] in alerting]
+    normal = [e for e in edges if e["src"] not in alerting]
+
+    traces = []
+    if normal:
+        xs, ys, zs = _segments(normal)
+        traces.append(go.Scatter3d(
+            x=xs, y=ys, z=zs, mode="lines", hoverinfo="none",
+            line=dict(color="rgba(150,165,195,0.30)", width=2), name="flows"))
+    if risky:
+        xs, ys, zs = _segments(risky)
+        traces.append(go.Scatter3d(
+            x=xs, y=ys, z=zs, mode="lines", hoverinfo="none",
+            line=dict(color="rgba(225,45,45,0.85)", width=5),
+            name="edge from an alerting host"))
+
+    max_deg = max((n["degree"] for n in nodes), default=1) or 1
+    sizes = [13 + (17 if n["n_alerts"] > 0 else 0) + 12 * (n["degree"] / max_deg) for n in nodes]
+    traces.append(go.Scatter3d(
+        x=[n["x"] for n in nodes], y=[n["y"] for n in nodes], z=[n["z"] for n in nodes],
+        mode="markers+text",
+        marker=dict(
+            size=sizes, color=[n["peak_prob"] for n in nodes], colorscale="YlOrRd",
+            cmin=0.0, cmax=1.0, showscale=True,
+            colorbar=dict(title="attack<br>prob", thickness=12, len=0.6),
+            line=dict(width=0.5, color="#333")),
+        text=[n["ip"] if n["n_alerts"] > 0 else "" for n in nodes],
+        textposition="top center", textfont=dict(size=9, color="#e0e0e0"),
+        hovertext=[f"{n['ip']}<br>peak prob {n['peak_prob']:.3g}<br>"
+                   f"alerts {n['n_alerts']} · flows {n['degree']}" for n in nodes],
+        hoverinfo="text", name="hosts"))
+
+    # Tight, symmetric axis ranges from the data (Plotly auto-range pads a small
+    # point cloud into a dot in an empty box), plus a close camera, so a handful
+    # of hosts fills the view.
+    r = max((abs(c) for n in nodes for c in (n["x"], n["y"], n["z"])), default=1.0) * 1.15
+    axis = dict(visible=False, range=[-r, r])
+    fig = go.Figure(traces)
+    fig.update_layout(
+        showlegend=False, height=600, margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        scene=dict(
+            xaxis=axis, yaxis=axis, zaxis=axis,
+            bgcolor="rgba(0,0,0,0)", aspectmode="cube",
+            camera=dict(eye=dict(x=1.0, y=1.0, z=0.85))))
+    return fig
+
+
 def _session_dir() -> Path:
     if "run_dir" not in st.session_state:
         st.session_state.run_dir = Path(tempfile.mkdtemp(prefix="sih26-run-"))
@@ -219,3 +283,59 @@ st.caption(
     "Regenerate: `python scripts/make_ablation_table.py`. The RSSM world model "
     "failed its lead-time gate and is not shipped — see docs/decisions/004."
 )
+
+# ---------------------------------------------------------------- network graph
+st.header("7 · Network attack graph (3D)")
+st.caption(
+    "The same host graph the TGN encoder operates on: **nodes are devices** (hover "
+    "for the IP), **edges are flows**. Node colour and size grow with forecast "
+    "probability; **edges leaving an alerting host glow red**. Drag to rotate, scroll "
+    "to zoom."
+)
+_gnodes = (result.get("graph") or {}).get("nodes", [])
+if not _gnodes:
+    st.info("No host graph for this input (no flows).")
+else:
+    ranked_ips = [n["ip"] for n in sorted(
+        _gnodes, key=lambda n: (n["peak_prob"], n["n_alerts"]), reverse=True)]
+
+    cc1, cc2 = st.columns([3, 1])
+    pick = cc1.selectbox(
+        "Contain a host (what-if: ablate its traffic and re-score the network)",
+        ["— none —"] + ranked_ips, key="contain_pick")
+    if cc2.button("Apply containment"):
+        if pick != "— none —":
+            with st.spinner(f"Re-scoring the network without {pick}…"):
+                st.session_state.contained_result = panels.what_if_remove_host(
+                    input_path, _session_dir(), pick)["after"]
+                st.session_state.contained_host = pick
+        else:
+            st.session_state.pop("contained_result", None)
+            st.session_state.pop("contained_host", None)
+        st.rerun()
+
+    gresult = st.session_state.get("contained_result", result)
+    contained = st.session_state.get("contained_host")
+    if contained:
+        delta = gresult["n_alerts"] - result["n_alerts"]
+        st.warning(
+            f"**Containment (what-if):** removed `{contained}` → network alerts "
+            f"{result['n_alerts']} → {gresult['n_alerts']} ({delta:+d}). This is a "
+            "counterfactual re-score, **not** a live block — a defence orchestrator is "
+            "roadmap, not a shipped action.",
+            icon="🛡️",
+        )
+        if st.button("Clear containment"):
+            st.session_state.pop("contained_result", None)
+            st.session_state.pop("contained_host", None)
+            st.rerun()
+
+    layout = panels.network_graph_layout(gresult)
+    if layout["nodes"]:
+        st.plotly_chart(_network_figure(layout), use_container_width=True)
+        if layout["truncated"]:
+            st.caption(
+                f"Showing the {layout['shown']} highest-risk hosts of {layout['total']}."
+            )
+    else:
+        st.info("The contained network has no remaining host graph.")

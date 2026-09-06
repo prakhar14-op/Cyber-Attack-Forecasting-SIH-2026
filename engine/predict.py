@@ -224,7 +224,46 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
         "n_alerts": int(len(alert_rows)),
         "forecasts": forecasts,
         "threshold": threshold,
+        "graph": _build_graph(flows, wf, forecasts),
     }
+
+
+def _build_graph(flows, wf, forecasts) -> dict:
+    """Host communication graph for the 3D network view (M10.8).
+
+    Nodes are hosts (real IPs / configured pseudonyms), edges are src->dst flow
+    relationships aggregated by count. Each node carries its peak forecast
+    probability and alert count (from the forecasts, keyed on the SOURCE host,
+    which is what the model scores); each edge carries the risk of its source
+    node so a risky edge can be highlighted. This is a summary of the same TGN
+    host graph the encoder operates on — data, not a re-extraction."""
+    peak: dict[str, float] = {}
+    alerts: dict[str, int] = {}
+    for f in forecasts:
+        h = str(f["host"])
+        peak[h] = max(peak.get(h, 0.0), float(f["probability"]))
+        alerts[h] = alerts.get(h, 0) + 1
+
+    internal = {}
+    if wf is not None and len(wf) and "internal" in wf.columns:
+        for h, v in zip(wf["host"].astype(str), wf["internal"]):
+            internal.setdefault(h, int(v))
+
+    edges = []
+    ips = set(peak)
+    if flows is not None and len(flows) and {"src_ip", "dst_ip"} <= set(flows.columns):
+        agg = flows.groupby(["src_ip", "dst_ip"]).size().reset_index(name="weight")
+        for r in agg.itertuples(index=False):
+            s, d = str(r.src_ip), str(r.dst_ip)
+            edges.append({"src": s, "dst": d, "weight": int(r.weight),
+                          "risk": float(peak.get(s, 0.0))})
+            ips.add(s)
+            ips.add(d)
+
+    nodes = [{"ip": ip, "peak_prob": float(peak.get(ip, 0.0)),
+              "n_alerts": int(alerts.get(ip, 0)), "internal": internal.get(ip)}
+             for ip in sorted(ips)]
+    return {"nodes": nodes, "edges": edges}
 
 
 def _top_contributing_windows(history, alert_ws: float, context_seconds: float, k: int = 3):

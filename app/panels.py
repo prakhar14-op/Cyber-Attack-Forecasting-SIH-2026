@@ -83,6 +83,69 @@ def what_if_remove_host(input_path, out_dir, host_to_remove: str, fpr_budget=0.0
     return {"removed_host": host_to_remove, "after": after}
 
 
+def network_graph_layout(result: dict, max_nodes: int = 60, seed: int = 1337) -> dict:
+    """3D force-directed layout of the host graph in result['graph'] (M10.8).
+
+    Pure and offline: networkx computes the spring layout; the app renders it with
+    Plotly. Nodes are ranked by risk (peak probability, then alerts, then flow
+    degree) and trimmed to `max_nodes` for readability — never silently: the
+    returned dict reports `shown`/`total`/`truncated` so the UI can say so.
+    """
+    import networkx as nx
+
+    g = result.get("graph") or {"nodes": [], "edges": []}
+    nodes = {n["ip"]: n for n in g["nodes"]}
+    edges = g["edges"]
+
+    degree: dict[str, int] = {}
+    for e in edges:
+        degree[e["src"]] = degree.get(e["src"], 0) + e["weight"]
+        degree[e["dst"]] = degree.get(e["dst"], 0) + e["weight"]
+
+    ranked = sorted(
+        nodes.values(),
+        key=lambda n: (n["peak_prob"], n["n_alerts"], degree.get(n["ip"], 0)),
+        reverse=True,
+    )
+    keep = {n["ip"] for n in ranked[:max_nodes]}
+    kept_edges = [e for e in edges if e["src"] in keep and e["dst"] in keep]
+
+    G = nx.Graph()
+    G.add_nodes_from(keep)
+    for e in kept_edges:
+        G.add_edge(e["src"], e["dst"])
+
+    n = G.number_of_nodes()
+    if n == 0:
+        return {"nodes": [], "edges": [], "shown": 0, "total": len(nodes), "truncated": False}
+
+    # Lay out by TOPOLOGY, not flow volume: weight=None so a heavy edge (e.g. a
+    # 1300-flow scan) does not collapse its endpoints onto each other, and a
+    # larger optimal distance k spreads a small graph so nodes stay legible.
+    pos = nx.spring_layout(G, dim=3, seed=seed, weight=None,
+                           k=(2.5 / (n ** 0.5)) if n > 1 else None, iterations=200)
+    out_nodes = []
+    for ip in keep:
+        x, y, z = (float(c) for c in pos[ip])
+        n = nodes[ip]
+        out_nodes.append({
+            "ip": ip, "x": x, "y": y, "z": z,
+            "peak_prob": float(n["peak_prob"]), "n_alerts": int(n["n_alerts"]),
+            "internal": n.get("internal"), "degree": int(degree.get(ip, 0)),
+        })
+    out_edges = []
+    for e in kept_edges:
+        a, b = pos[e["src"]], pos[e["dst"]]
+        out_edges.append({
+            "src": e["src"], "dst": e["dst"], "weight": int(e["weight"]),
+            "risk": float(e["risk"]),
+            "x0": float(a[0]), "y0": float(a[1]), "z0": float(a[2]),
+            "x1": float(b[0]), "y1": float(b[1]), "z1": float(b[2]),
+        })
+    return {"nodes": out_nodes, "edges": out_edges,
+            "shown": len(keep), "total": len(nodes), "truncated": len(nodes) > len(keep)}
+
+
 def ledger_status(out_dir) -> dict:
     """Chain length, head, checkpoint match and verification result (M10.5)."""
     from ledger import verify_cli
