@@ -29,7 +29,15 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M8 engine + explainability | functional — offline predict → SHAP named-feature explanations → MITRE technique → ledger; **8.3 attention-over-windows and 8.7 what-if not yet built** (untagged) |
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
 | M10 offline app | done (`m10-app`) — Streamlit demo: upload → timeline → named-feature explanations → what-if → ledger verify/tamper → results card; telemetry disabled |
-| M11–M12 lab capture, deliverables | not started |
+| M11 lab capture | not started — needs real machines + written consent (the only source of `lateral_movement` / `exfiltration`) |
+| M12 deliverables | architecture, limitations, demo script, weight digests done; video + slides outstanding |
+
+## Read this first
+
+- [docs/limitations.md](docs/limitations.md) — what this system cannot do, stated plainly
+- [docs/architecture.md](docs/architecture.md) — 2-page design
+- [docs/benchmark_protocol.md](docs/benchmark_protocol.md) — how every number is produced
+- [docs/decisions/](docs/decisions/) — the decision log, including the world model that failed
 
 ## Results
 
@@ -109,8 +117,27 @@ CSE-CIC-IDS2018 (Canadian Institute for Cybersecurity / UNB), AWS Open Data
 
 ## Model weights
 
-TBD — released via GitHub Releases with SHA-256 recorded here and verified by
-`scripts/verify_weights.py` before every inference batch.
+Released via GitHub Releases (not committed — see `.gitignore`). The engine **refuses to write
+ledger records** if a digest does not match, so a ledger entry can never claim provenance it
+does not have. Verify at any time with `python scripts/verify_weights.py`.
+
+| artefact | SHA-256 |
+|---|---|
+| `engine_model.json` | `efec13b6ec96697c4f50e4fd36a00a8c86813cc5ea2a10ea8dfbe9eba6bf9297` |
+| `graft.pt` | `cca98b225b5ef4ca1abbb0246de0f66805a290aef02331a40a95c311f9c689cf` |
+| `tgn_encoder.pt` | `d228090cd0929e2c95ce23caab5e07ec7b30cf93a426241fd1263efba07348fe` |
+| `window_scaler.pkl` | `af558b0e8906b70c453c9760011bce046ed07b5865566f809a48bf1c6ec44b9c` |
+
+Regenerate from scratch (no weights needed):
+
+```
+bash data/download_cic.sh          # sizes printed before any byte moves
+python -m data.zip_fetch           # selective per-host pcap fetch (~12.7 GiB, decision 001)
+python -m data.extract             # flow + packet features
+python -m data.windows             # window matrix + class-count report
+python -m engine.train_engine      # engine model, threshold, digests
+python scripts/verify_weights.py --record
+```
 
 ## Licence
 

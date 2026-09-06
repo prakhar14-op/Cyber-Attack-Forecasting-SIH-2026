@@ -1,3 +1,97 @@
-# Architecture
+# Architecture — Network Attack Forecasting (SIH26153)
 
-TBD — written at M12.2 (max 2 pages). Structure: input -> features (flow+packet) -> windows -> TGN -> GRAFT (causal) -> RSSM rollout -> heads -> explanations -> ledger.
+**Two pages.** Numbers are reproducible via `python scripts/make_ablation_table.py`.
+
+## 1. Problem and unit of prediction
+
+Given network traffic up to time *t*, forecast the **infiltration probability and ATT&CK stage
+at *t+k***, explain each forecast in named features, and commit it to a tamper-evident ledger —
+fully offline. The unit is **(source host, 15 s window)** on a 5 s stride, never per-flow and
+never whole-network; the network-level score is the **max** over host scores in a window.
+Success is measured by **lead time** (seconds between the first alert on the attacking host and
+the annotated attack completion) at a fixed false-positive budget — not by F1.
+
+## 2. Pipeline
+
+```
+PCAP / CSV ─► extract ─► window features ─► TGN encoder ─► forecast head ─► engine ─► ledger
+             (packets)   30 named, window-   (temporal      (horizon k)     (explain,  (hash chain
+                          bounded             graph memory)                  threshold) + Merkle)
+```
+
+**Ingest & features.** A single streaming extractor (`data/packet_features.py`) parses pcap
+bytes with raw struct offsets (~110k packets/s, bounded memory on a 4.3 GB flood capture) and
+emits both flow records and per-`(src, window)` packet statistics: TTL mean/variance, TCP
+window, fragment flags, an 8-bin payload histogram, distinct destination ports/IPs, port
+entropy, a **sequential-vs-randomised scan ratio**, and retransmission counts (tshark-verified,
+scapy fallback). `data/windows.py` joins these into a **30-feature, strictly window-bounded**
+matrix — every value summarises only packets whose own timestamp lies in the window. That
+constraint is load-bearing: attributing whole-flow totals to a flow's start window leaked
+forecast-horizon traffic into the present and would have fabricated the headline metric
+(`docs/decisions/003`).
+
+**Identity.** Nodes are keyed-HMAC pseudonyms with a per-epoch permutation; node features are
+role-only (internal/external, hashed /24). No raw IP reaches the model or the ledger.
+
+**Encoder.** `models/tgn.py` maintains a TGN memory over the host graph; edges are flow events
+timestamped at **flow end** (a flow's statistics are only known once it completes — the same
+causality rule as the features). Each host's memory vector at a window boundary is its
+embedding. Memory is reset between splits so training state never reaches test.
+
+**Sequence model.** `models/graft.py` is a 2-layer causal Transformer over per-host window
+sequences — always masked with both a causal mask and a padding mask, verified *bit-identically*
+by `test_no_future_leakage` (perturbing windows *t+1…T* leaves the prediction at *t* unchanged).
+It carries a Dirichlet evidential head (uncertainty = K/S) and a benign-only reconstruction head
+as an OOD signal.
+
+**Forecast head.** Labels are shifted by *k*, so the model predicts *"attack on this host in k
+windows"*. This is the shipped M7 deliverable; the planned RSSM rollout failed its gate and is
+recorded as a negative result (`docs/decisions/004`, `docs/limitations.md` §4).
+
+## 3. Engine, explainability, ledger
+
+`engine/predict.py` runs fully offline from persisted artefacts: it builds features from the
+input file, scores each host-window against a threshold **fitted from an FPR budget on
+validation** (never a literal), and for each alert emits a JSON-schema-validated object:
+probability, stage, MITRE technique, top-5 **named** features, and the flagged flows in that
+window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
+statement rules out black-box output, so explanations name `payload_hist_0` or
+`distinct_dst_ips`, never an embedding index. `engine/technique_map.yaml` maps stage + observed
+pattern to techniques actually evidenced in our data (internal scan → **T1046**, credential
+guessing → **T1110**, C2 → **T1071**, availability attack → **T1498**, bulk egress → **T1048**).
+
+Every forecast is appended to an **append-only hash-chained JSONL** with per-batch Merkle roots
+(`ledger/`). Editing one record breaks that record's hash and the verifier names its exact
+index; a fully rewritten, self-consistent chain still fails because its head no longer matches
+the **anchored checkpoint**. Hosts are HMAC-pseudonymised in the chain, and the engine
+**refuses to write records if the model weights' SHA-256 does not match** the recorded digest,
+so a ledger entry can never claim provenance it does not have. `ledger/verify_cli.py` lets a
+judge verify with no network.
+
+## 4. Evaluation and results
+
+Splits are **day-wise** (train 14-02+16-02, val 28-02, test 02-03); the scaler is fit on train
+only and the threshold on validation only. With four attack days this makes the splits
+attack-family-disjoint, so the headline is a cross-family generalisation test. Undetected
+episodes count as **0 s** lead and are never dropped.
+
+Test split (bot day), 1 % FPR budget:
+
+| model | AUROC | F1 | median lead | episodes |
+|---|---|---|---|---|
+| TGN encoder | **0.954** | 0.565 | 5038 s | 2/2 |
+| XGBoost | 0.895 | 0.309 | 5148 s | 2/2 |
+| LSTM | 0.564 | 0.016 | 4202 s | 2/2 |
+| Logistic regression (graded baseline) | 0.537 | 0.001 | 0 s | 0/2 |
+
+Forecasting ahead (shipped M7): AUROC **0.895 at k=4 (20 s ahead)** with **2/2 episodes and
+~65 min lead** — the ranking is essentially flat from nowcast to k=8, while a linear model
+cannot transfer across attack families at all.
+
+## 5. Offline guarantee
+
+No cloud APIs, no runtime downloads, no telemetry (Streamlit's usage reporting is explicitly
+disabled). Dependencies install from a local wheel-house (`pip install --no-index --find-links
+vendor`). `pytest tests/ -q` and `python -m tests.smoke` both run with **every socket blocked**;
+the smoke run takes 1,000 flows through features → forecast → explanation → ledger →
+verification in ~9 s.
