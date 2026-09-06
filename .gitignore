@@ -28,6 +28,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Generated engine output (ledger, checkpoints, forecasts) — never committed
+run/
+# Local Claude Code settings (launch.json is kept; personal settings are not)
+.claude/settings.local.json
+
 # The synthetic demo capture IS bundled (small, deterministic, illustrative —
 # regenerable via `python -m capture.make_synthetic_demo`). NOT real capture data.
 !app/assets/synthetic_demo.pcap
