@@ -45,13 +45,15 @@ seen in training. 1 % FPR budget.
 
 | model | AUROC | median lead | episodes |
 |---|---|---|---|
-| **TGN temporal encoder** | **0.954** | 5038 s | **2/2** |
-| XGBoost | 0.895 | 5148 s | 2/2 |
-| LSTM | 0.564 | 4202 s | 2/2 |
-| Logistic regression *(graded baseline)* | 0.537 | 0 s | **0/2** |
+| **Fused (TGN + XGBoost, rank-mean)** | **0.942** | 5008 s | **2/2** |
+| GRAFT + clamped Time2Vec *(best single)* | 0.937 | 4170 s | 2/2 |
+| TGN temporal encoder | 0.877 | 3595 s | 2/2 |
+| XGBoost | 0.872 | 4208 s | 2/2 |
+| Logistic regression *(graded baseline)* | 0.573 | 0 s | **0/2** |
 
-**Forecasting ahead:** at **k=4 (20 s ahead)** the model holds **0.895 AUROC** and still catches
-**both** episodes ~**65 minutes** before completion. Ranking stays flat from nowcast to k=8.
+**Forecasting ahead:** at **k=4 (20 s ahead)** the model holds **0.913 AUROC** and still catches
+**both** episodes ~**80 minutes** before completion. All numbers under one standardised,
+reproducible anonymisation key.
 
 > Temporal host *dynamics* transfer across attack families. Static flow signatures do not —
 > the linear baseline is at chance on an unseen family.

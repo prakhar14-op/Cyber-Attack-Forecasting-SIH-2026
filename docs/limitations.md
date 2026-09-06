@@ -26,8 +26,9 @@ leak) with four attack days means **no attack family appears in both train and e
 carries bruteforce + DoS, validation infiltration, test bot. Two consequences:
 
 - The headline result is a genuine **cross-family generalisation** test, which is the honest
-  hard version of the problem — and the reason the linear baseline collapses to 0.537 AUROC
-  while the temporal-graph encoder reaches 0.954.
+  hard version of the problem — and the reason the linear baseline collapses to 0.573 AUROC
+  while the fused temporal model reaches 0.942 (all under the standardised anonymisation key;
+  earlier pre-standardisation numbers were unreproducible and were retired).
 - **Multi-class stage metrics are not meaningfully trainable**: `c2` never appears in the
   training split, so the stage head cannot be expected to emit it on val/test.
 
@@ -44,7 +45,7 @@ split the two are close — flow-only **0.847** vs full **0.806** AUROC (`artifa
 so the flow model is not worse there. We still recommend a PCAP not for a raw AUROC win but
 because only the PCAP path carries the packet-level features the PS itself mandates (TTL, TCP
 window, fragment flags, payload histogram, scan signature, retransmissions), and the headline
-**test-split** numbers (full features: XGBoost 0.895, TGN encoder 0.954 AUROC, 2-of-2 episodes)
+**test-split** numbers (full features: XGBoost 0.872, fused model 0.942 AUROC, 2-of-2 episodes)
 are built on them. **Feed the demo a PCAP for the full, PS-compliant feature set**; the app warns
 explicitly when given a CSV. This is not a bug we can engineer away — it is a property of the
 input format.
@@ -56,10 +57,14 @@ its own acceptance gate** (`docs/decisions/004`): the posterior collapsed, the u
 did not widen with horizon, and it detected **0 of 2** attack episodes with **0 s** lead time —
 worse than the embeddings it consumes. A second attempt with the standard anti-collapse recipe
 recovered most of the ranking (k=8 AUROC 0.683 → 0.851) but still detected 0/2 episodes.
+(Those RSSM figures are the historical gate record from decision 004, measured before the
+anonymisation key was standardised; the gate verdict — 0/2 episodes — is the decision-bearing
+fact and did not depend on the key.)
 
 We ship what actually works: the TGN temporal-graph encoder forecasting at horizon *k*, which
-holds AUROC ≈ 0.89 out to k=8 and catches **both** episodes with ~65 min lead at k=4 (20 s
-ahead). The RSSM is recorded as a negative result with its recipe, not quietly dropped.
+holds AUROC ≈ 0.91 out to k=8 and catches **both** episodes with ~80 min lead at k=4 (20 s
+ahead); at k=8 the fixed 1 % operating point stops firing (0/2) — stated, not hidden. The RSSM
+is recorded as a negative result with its recipe, not quietly dropped.
 
 ## Also worth knowing
 
