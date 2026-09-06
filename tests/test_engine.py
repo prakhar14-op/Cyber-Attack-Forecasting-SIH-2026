@@ -127,6 +127,32 @@ def test_engine_refuses_to_log_on_weight_mismatch(fixture_csv, tmp_path, monkeyp
     )
 
 
+@pytest.mark.skipif(
+    not (importlib.util.find_spec("xgboost")
+         and __import__("configs").resolve_path("artifacts/engine_model_flow.json").exists()),
+    reason="engine model not trained — run python -m engine.train_engine",
+)
+def test_predict_file_on_empty_input_yields_zero_alerts(tmp_path):
+    """Edge case: an empty (header-only) CSV must produce 0 alerts and a valid
+    (empty) ledger, never a crash."""
+    import csv
+
+    from configs import load_config
+    from engine import predict
+    from ledger import verify_cli
+
+    cfg = load_config("data")
+    empty = tmp_path / "empty.csv"
+    with open(empty, "w", newline="", encoding="utf-8") as fh:
+        csv.writer(fh).writerow(list(cfg["schema"].values()))
+
+    result = predict.predict_file(empty, out_dir=tmp_path)
+    assert result["n_flows"] == 0 and result["n_host_windows"] == 0
+    assert result["n_alerts"] == 0 and result["forecasts"] == []
+    ok, _ = verify_cli.verify(tmp_path / "audit_chain.jsonl")
+    assert ok, "empty-input ledger must still verify"
+
+
 def test_top_contributing_windows_ranks_and_bounds_context():
     """M8.3: top windows are the host's highest-probability windows within the
     context leading up to the alert, with seconds-before-alert."""

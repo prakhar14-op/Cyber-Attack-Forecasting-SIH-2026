@@ -113,6 +113,14 @@ def test_window_features_from_flows_are_window_bounded(data_cfg):
     assert wf["window_start"].max() <= t0.timestamp() + 40 + win
 
 
+def test_window_features_from_flows_handles_empty_input(data_cfg):
+    """Zero flows (empty file / host filtered to nothing) must return an empty
+    but well-typed frame, not crash on arithmetic over empty string columns."""
+    wf = W.window_features_from_flows(data_cfg, pd.DataFrame())
+    assert len(wf) == 0
+    assert list(wf.columns) == W._META_COLS + W.feature_columns(data_cfg)
+
+
 def test_build_window_features_joins_flow_and_packet(synthetic_day):
     cfg, day = synthetic_day
     anon = Anonymizer(b"k", cfg["anonymisation"])

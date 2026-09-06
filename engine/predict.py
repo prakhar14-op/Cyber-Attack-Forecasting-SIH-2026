@@ -160,8 +160,13 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
                           & (flows["dst_ip"].astype(str) != exclude_host)].reset_index(drop=True)
 
     feat_cols = W.feature_columns(cfg)
-    X = scaler.transform(wf[feat_cols].to_numpy(dtype=np.float64)).astype(np.float32)
-    probs = booster.predict_proba(X)[:, 1] if len(X) else np.empty(0, dtype=float)
+    raw_X = wf[feat_cols].to_numpy(dtype=np.float64)
+    if len(raw_X):
+        X = scaler.transform(raw_X).astype(np.float32)
+        probs = booster.predict_proba(X)[:, 1]
+    else:  # zero host-windows (empty/degenerate input): 0 alerts, no crash
+        X = np.empty((0, len(feat_cols)), dtype=np.float32)
+        probs = np.empty(0, dtype=float)
 
     explainer = EX.ShapExplainer(booster, feat_cols)
     window_sec = cfg["windows"]["window_seconds"]

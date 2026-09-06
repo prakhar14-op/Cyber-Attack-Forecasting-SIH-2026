@@ -231,6 +231,12 @@ def window_features_from_flows(cfg: dict, flows: pd.DataFrame, anonymizer=None) 
     n_overlap = win // stride
 
     fl = flows.copy().reset_index(drop=True)
+    ordered = _META_COLS + feature_columns(cfg)
+    if len(fl) == 0:
+        # zero flows (empty file, or a host filtered to nothing): return an empty
+        # but well-typed frame so the engine yields 0 alerts instead of crashing
+        # on arithmetic over empty string columns.
+        return pd.DataFrame(columns=ordered)
     ts = fl["timestamp"].map(pd.Timestamp.timestamp).to_numpy(dtype=float)
     # duration is CICFlowMeter microseconds; a flow occupies [start, start+dur).
     dur = (fl["duration"].to_numpy(dtype=float) / 1e6
