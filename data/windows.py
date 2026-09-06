@@ -213,40 +213,79 @@ def window_features_from_flows(cfg: dict, flows: pd.DataFrame, anonymizer=None) 
     """Per-(source_host, window) features from a FLOW table (engine CSV path).
 
     A CSV input (CICFlowMeter) has no packets, so the 17 packet-statistic
-    features are unavailable and set to 0; the 11 window-bounded sent features
-    are derived from the flows (bytes/pkts/flags summed per host-window, distinct
-    dst ports/IPs), and role features from the IP. Honest degradation — full
-    features need PCAP (decision 001). Flows contribute to the windows their
-    start timestamp covers (the same overlap grid as the packet path).
-    """
-    from data import packet_features as pf
+    features are unavailable and set to 0; the 11 sent features are derived from
+    the flows and role features from the IP. Honest degradation — full features
+    need PCAP (decision 001).
 
-    fl = flows.copy()
-    fl["ts"] = fl["timestamp"].map(pd.Timestamp.timestamp)
-    parts = []
-    for ids in pf.window_ids_for(fl["ts"], cfg):
-        part = fl.copy()
-        part["window_id"] = ids
-        parts.append(part)
-    ex = pd.concat(parts, ignore_index=True).rename(columns={"src_ip": "host"})
+    Crucially the sent features are WINDOW-BOUNDED, exactly like the packet path
+    (decision 003): a flow's bytes/pkts/flags are DISTRIBUTED across the windows
+    the flow actually spans, in proportion to the time it overlaps each 15 s
+    window — never dumped whole into the flow's start window. Dumping whole-flow
+    totals into the start window is the decision-003 leak: a flow running far
+    longer than a window would inject its later (forecast-horizon) traffic into
+    the present. This is a uniform-rate approximation of the packet path's
+    per-packet binning; exact per-packet timing needs a PCAP.
+    """
+    stride = cfg["windows"]["stride_seconds"]
+    win = cfg["windows"]["window_seconds"]
+    n_overlap = win // stride
+
+    fl = flows.copy().reset_index(drop=True)
+    ts = fl["timestamp"].map(pd.Timestamp.timestamp).to_numpy(dtype=float)
+    # duration is CICFlowMeter microseconds; a flow occupies [start, start+dur).
+    dur = (fl["duration"].to_numpy(dtype=float) / 1e6
+           if "duration" in fl.columns else np.zeros(len(fl)))
+
+    # Explode each flow into (row, window_id, fraction of the flow inside window).
+    rows_i: list[int] = []
+    wins: list[int] = []
+    fracs: list[float] = []
+    for i in range(len(fl)):
+        s = float(ts[i])
+        d = float(dur[i])
+        if not np.isfinite(d) or d <= 0.0:
+            # zero-duration: contribute fully to each window covering the instant
+            # (same treatment a single packet gets on the packet path).
+            last = int(np.floor(s / stride))
+            for k in range(n_overlap):
+                rows_i.append(i); wins.append(last - k); fracs.append(1.0)
+            continue
+        e = s + d
+        k_lo = int(np.floor((s - win) / stride))
+        k_hi = int(np.floor(e / stride)) + 1
+        for k in range(k_lo, k_hi + 1):
+            w0 = k * stride
+            overlap = min(e, w0 + win) - max(s, w0)
+            if overlap > 0.0:
+                rows_i.append(i); wins.append(k); fracs.append(overlap / d)
+
+    ex = fl.iloc[rows_i].copy().rename(columns={"src_ip": "host"})
+    ex["window_id"] = wins
+    ex["_frac"] = fracs
+
+    # Counts (bytes/pkts/flags) are distributed by the time-overlap fraction.
+    ex["_wb"] = ex["fwd_bytes"] * ex["_frac"]
+    ex["_wp"] = ex["fwd_pkts"] * ex["_frac"]
+    flag_cols = ("syn", "ack", "fin", "rst", "psh", "urg")
+    for flag in flag_cols:
+        ex["_w_" + flag] = ex[flag] * ex["_frac"]
+    server_ports = set(int(p) for p in cfg["anonymisation"]["server_ports"])
+    ex["_srv"] = ex["src_port"].isin(server_ports)
 
     g = ex.groupby(["host", "window_id"], sort=True)
     out = pd.DataFrame(index=g.size().index)
-    out["sent_bytes"] = g["fwd_bytes"].sum()
-    out["sent_pkts"] = g["fwd_pkts"].sum()
-    for flag in ("syn", "ack", "fin", "rst", "psh", "urg"):
-        out[flag] = g[flag].sum()
+    out["sent_bytes"] = g["_wb"].sum()
+    out["sent_pkts"] = g["_wp"].sum()
+    for flag in flag_cols:
+        out[flag] = g["_w_" + flag].sum()
     out["syn_win_mean"] = g["init_win_fwd"].mean().clip(lower=0)
     out["distinct_dst_ips"] = g["dst_ip"].nunique()
-    server_ports = set(int(p) for p in cfg["anonymisation"]["server_ports"])
-    ex["_srv"] = ex["src_port"].isin(server_ports)
-    out["server_port_ratio"] = ex.groupby(["host", "window_id"])["_srv"].mean()
+    out["server_port_ratio"] = g["_srv"].mean()
 
     for c in cfg["packet_features"]["fields"]:
         out[c] = 0.0  # packet-statistic features are unavailable from a CSV
 
     result = out.reset_index()
-    stride = cfg["windows"]["stride_seconds"]
     result["window_start"] = result["window_id"].astype("int64") * stride
     result["day"] = "input"
     if anonymizer is not None:

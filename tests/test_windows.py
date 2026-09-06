@@ -83,6 +83,36 @@ def test_feature_columns_stable_and_unique(data_cfg):
     assert cols == W.feature_columns(data_cfg)
 
 
+def test_window_features_from_flows_are_window_bounded(data_cfg):
+    """decision 003 (CSV inference path): a long flow's bytes must be distributed
+    across the windows it spans, never dumped whole into its start window — which
+    would inject the flow's later, forecast-horizon traffic into the present."""
+    stride = data_cfg["windows"]["stride_seconds"]
+    win = data_cfg["windows"]["window_seconds"]
+    t0 = pd.Timestamp("2018-02-20 00:00:00")
+    # one 40 s flow carrying 40000 bytes.
+    flow = {
+        "timestamp": t0, "src_ip": "10.0.0.1", "dst_ip": "10.0.0.2",
+        "src_port": 40000, "dst_port": 80, "protocol": 6,
+        "duration": 40_000_000,  # 40 s in microseconds
+        "fwd_bytes": 40000.0, "fwd_pkts": 400,
+        "syn": 1, "ack": 1, "fin": 0, "rst": 0, "psh": 0, "urg": 0,
+        "init_win_fwd": 64240,
+    }
+    wf = W.window_features_from_flows(data_cfg, pd.DataFrame([flow]))
+
+    # no single window may hold more than the 15/40 max time-overlap share.
+    assert wf["sent_bytes"].max() < 40000 * 0.5, (
+        "a long flow dumped most/all of its bytes into one window (decision-003 leak)"
+    )
+    # summed across the overlapping 15 s / 5 s windows the total is ~3x, bounded.
+    total = wf["sent_bytes"].sum()
+    assert 40000 * 2 < total < 40000 * 4
+    # every touched window lies within the flow's own [start, start+40s] footprint.
+    assert wf["window_start"].min() >= t0.timestamp() - win
+    assert wf["window_start"].max() <= t0.timestamp() + 40 + win
+
+
 def test_build_window_features_joins_flow_and_packet(synthetic_day):
     cfg, day = synthetic_day
     anon = Anonymizer(b"k", cfg["anonymisation"])

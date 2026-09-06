@@ -19,8 +19,9 @@ Disconnect Wi-Fi / unplug Ethernet **before** starting the recording, and say so
 > "This forecasts network attacks *before* they finish. Not a flow classifier — the metric that
 > matters is lead time. And it runs with the network physically disconnected."
 
-Show `pytest tests/ -q` finishing: **76 passed**, then `python -m tests.smoke` →
-`1000 flows -> forecasts, ledger_verified=True, 9.2s`. Both run with sockets blocked.
+Show `pytest tests/ -q` finishing: **81 passed, 1 skipped** (the skip is the
+env-gated tshark cross-check), then `python -m tests.smoke` →
+`1000 flows -> forecasts, ledger_verified=True, ~9s`. Both run with sockets blocked.
 
 ### 0:15–0:35 — Input and forecast timeline
 

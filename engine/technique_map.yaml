@@ -24,8 +24,17 @@ initial_access:
       name: Brute Force (credential guessing)
 
 lateral_movement:
-  default: T1021    # Remote Services (lab-capture only)
+  default: T1021    # Remote Services — an established-session pivot login (lab capture)
   name: Remote Services
+  rules:
+    # An internal host sweeping another internal host is discovery, not a login:
+    # surface it as T1046 and reserve T1021 for the pivot-login signature.
+    - when: {distinct_dst_ports_gt: 20}
+      technique: T1046
+      name: Network Service Discovery (internal sweep)
+    - when: {sequential_port_ratio_gt: 0.5}
+      technique: T1046
+      name: Network Service Discovery (internal sequential sweep)
 
 c2:
   default: T1071    # Application Layer Protocol

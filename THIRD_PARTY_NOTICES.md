@@ -23,17 +23,17 @@ Exact pinned versions live in `requirements.txt` / `environment.lock.yml`.
 | torch | BSD-3-Clause | Deep models (TGN, GRAFT, RSSM) |
 | torch-geometric | MIT | Temporal graph network |
 | xgboost | Apache-2.0 | Baseline model |
-| captum | BSD-3-Clause | Integrated Gradients explanations |
-| shap | MIT | TreeSHAP on the flow-level pre-filter |
+| captum | BSD-3-Clause | Pinned but not currently imported — the shipped explainer is TreeSHAP (shap); kept as an alternative gradient-based explainer |
+| shap | MIT | TreeSHAP named-feature attributions on the deployed model (`engine/explain.py`) |
 | streamlit | Apache-2.0 | Offline demo app |
-| altair | BSD-3-Clause | Charts in the app (no CDN at runtime) |
+| altair | BSD-3-Clause | Transitive Streamlit dependency; the app renders charts with matplotlib (server-side, no CDN), not altair |
 | matplotlib | PSF-based (matplotlib licence) | Evaluation plots |
 | PyYAML | MIT | Config files |
 | jsonschema | MIT | Prediction-object validation |
 | scapy | GPL-2.0-only¹ | Packet parsing + the inline retransmission heuristic (default backend) |
 | pyshark | MIT | Pinned but not currently imported — see ² |
 | pyarrow | Apache-2.0 | Columnar interim storage |
-| tqdm | MPL-2.0 + MIT | Progress bars |
+| tqdm | MPL-2.0 + MIT | Transitive dependency; not imported by project code |
 | pytest | MIT | Test harness |
 
 ## External tools (not Python packages)

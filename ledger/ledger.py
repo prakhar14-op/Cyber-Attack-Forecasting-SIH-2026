@@ -112,14 +112,11 @@ class Ledger:
     def checkpoint(self) -> dict:
         """Anchor the current chain head + count + Merkle root of all records
         into the separate checkpoint log. In the demo this log's latest line is
-        also copied to a public location before the run."""
-        leaves = []
-        if self.chain_path.exists():
-            with open(self.chain_path, encoding="utf-8") as fh:
-                for line in fh:
-                    if line.strip():
-                        leaves.append(leaf_hash(line.strip()))
-        cp = {"head": self._head, "count": self._count, "merkle_root": merkle_root(leaves)}
+        also copied to a public location before the run. The Merkle root is
+        recomputed the same way verify_against_checkpoints() checks it, so the
+        two can never drift."""
+        cp = {"head": self._head, "count": self._count,
+              "merkle_root": self._current_merkle_root()}
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.checkpoint_path, "a", encoding="utf-8") as fh:
             fh.write(_canonical(cp) + "\n")
@@ -147,13 +144,28 @@ class Ledger:
                 prev = stored
         return True, None
 
+    def _current_merkle_root(self) -> str:
+        """Merkle root recomputed over the current chain records (one leaf per
+        line), matching what checkpoint() anchored."""
+        leaves = []
+        if self.chain_path.exists():
+            with open(self.chain_path, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.strip():
+                        leaves.append(leaf_hash(line.strip()))
+        return merkle_root(leaves)
+
     def verify_against_checkpoints(self) -> bool:
-        """True iff the current chain head matches an anchored checkpoint at the
-        same count. Catches a full self-consistent rewrite (which re-passes
-        verify() but produces a different head hash)."""
+        """True iff the current chain matches an anchored checkpoint at the same
+        count — BOTH the head hash AND the recomputed Merkle root. Catches a full
+        self-consistent rewrite (which re-passes verify() but produces a different
+        head) and, via the Merkle root, any single-record content edit even if the
+        head were left untouched. The Merkle root is thus an independently verified
+        commitment, not dead weight."""
         if not self.checkpoint_path.exists():
             return False
         head, count = self._resume_head()
+        root = self._current_merkle_root()
         with open(self.checkpoint_path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
@@ -161,5 +173,5 @@ class Ledger:
                     continue
                 cp = json.loads(line)
                 if cp["count"] == count:
-                    return cp["head"] == head
+                    return cp["head"] == head and cp.get("merkle_root") == root
         return False

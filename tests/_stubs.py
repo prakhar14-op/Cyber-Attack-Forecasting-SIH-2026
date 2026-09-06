@@ -49,3 +49,20 @@ def require_file(repo_relative: str, milestone: str) -> Path:
             f"{repo_relative} does not exist yet — created in {milestone}", pytrace=False
         )
     return path
+
+
+def engine_artifacts_present() -> bool:
+    """True when the trained engine artifacts an end-to-end run needs are on disk.
+
+    They are gitignored (CLAUDE.md: no weights in git) and produced by
+    `python -m engine.train_engine`, so on a bare checkout the end-to-end
+    tests (offline/smoke) skip loudly with a bootstrap hint rather than erroring
+    on a missing file. On the demo/dev machine — after the documented bootstrap —
+    the artifacts exist and the tests run for real.
+    """
+    from configs import load_config, resolve_path
+
+    art = resolve_path(load_config("data")["paths"]["artifacts_dir"])
+    need = ("engine_model.json", "engine_model_flow.json", "window_scaler.pkl",
+            "engine_threshold.json")
+    return all((art / n).exists() for n in need)

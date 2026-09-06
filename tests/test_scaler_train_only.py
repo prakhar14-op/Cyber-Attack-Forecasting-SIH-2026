@@ -10,10 +10,26 @@ from __future__ import annotations
 import pickle
 
 import numpy as np
+import pytest
 
+from configs import load_config, resolve_path
 from tests._stubs import require_attr, require_file, require_module
 
 
+def _scaler_refit_inputs_present() -> bool:
+    """The persisted scaler and the split map must exist to refit-and-compare.
+    Both are gitignored / dataset-derived (CLAUDE.md), so a bare checkout skips
+    rather than failing — run the M1 data pipeline + `--fit-scaler` to enable it."""
+    cfg = load_config("data")
+    return (resolve_path(cfg["paths"]["scaler"]).exists()
+            and resolve_path(cfg["paths"]["splits"]).exists())
+
+
+@pytest.mark.skipif(
+    not _scaler_refit_inputs_present(),
+    reason="persisted scaler / split map not built — needs the extracted dataset "
+           "+ `python -m data.flow_features --fit-scaler` (see README bootstrap)",
+)
 def test_persisted_scaler_statistics_match_train_split_refit(data_cfg):
     require_file(data_cfg["paths"]["splits"], "M1.5")
     scaler_path = require_file(data_cfg["paths"]["scaler"], "M1.6")

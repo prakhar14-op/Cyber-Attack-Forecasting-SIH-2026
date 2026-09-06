@@ -32,6 +32,13 @@ st.set_page_config(page_title="Network Attack Forecasting", layout="wide")
 CFG = load_config("data")
 
 
+def _fmt_threshold(x: float) -> str:
+    """The FPR-budget threshold lives on the model's raw score scale, which can
+    be tiny (e.g. 1.8e-05) — plain fixed-point would round it to 0.0000 and read
+    as 'no threshold'. Show small values in scientific notation."""
+    return f"{x:.4f}" if abs(x) >= 1e-3 else f"{x:.2e}"
+
+
 def _session_dir() -> Path:
     if "run_dir" not in st.session_state:
         st.session_state.run_dir = Path(tempfile.mkdtemp(prefix="sih26-run-"))
@@ -102,7 +109,7 @@ m1, m2, m3, m4 = st.columns(4)
 m1.metric("Flows", f"{result['n_flows']:,}")
 m2.metric("Host-windows", f"{result['n_host_windows']:,}")
 m3.metric("Alerts", f"{result['n_alerts']:,}")
-m4.metric("Threshold (1% FPR)", f"{result['threshold']:.4f}")
+m4.metric("Threshold (1% FPR)", _fmt_threshold(result["threshold"]))
 
 # ---------------------------------------------------------------- timeline
 st.header("2 · Forecast timeline")
@@ -115,7 +122,7 @@ else:
     ax.plot((tl["window_start"] - t0), tl["probability"], "-o", ms=3,
             color="#1a6faf", label="network score (max over hosts)")
     ax.axhline(result["threshold"], ls="--", color="crimson",
-               label=f"alert threshold ({result['threshold']:.3f})")
+               label=f"alert threshold ({_fmt_threshold(result['threshold'])})")
     for stage in tl["stage"].unique():
         sub = tl[tl["stage"] == stage]
         ax.scatter(sub["window_start"] - t0, sub["probability"], s=14, label=stage)

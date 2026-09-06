@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from tests import smoke
+from tests._stubs import engine_artifacts_present
+
+pytestmark = pytest.mark.skipif(
+    not engine_artifacts_present(),
+    reason="engine artifacts not built — run `python -m engine.train_engine` "
+           "(they are gitignored; see README bootstrap)",
+)
 
 
 def test_full_pipeline_on_1000_flow_fixture_offline_under_60s(

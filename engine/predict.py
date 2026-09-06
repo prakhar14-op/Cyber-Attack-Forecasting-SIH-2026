@@ -27,7 +27,7 @@ from configs import load_config, resolve_path, set_seed
 OUTPUT_SCHEMA = {
     "type": "object",
     "required": ["host", "window_start", "probability", "stage", "technique",
-                 "top_features", "flagged_flows"],
+                 "top_features", "top_windows", "flagged_flows"],
     "properties": {
         "host": {"type": "string"},
         "window_start": {"type": "number"},
@@ -44,7 +44,17 @@ OUTPUT_SCHEMA = {
             "type": "object",
             "required": ["window_start", "probability", "seconds_before_alert"],
         }},
-        "flagged_flows": {"type": "array"},
+        "flagged_flows": {"type": "array", "items": {
+            "type": "object",
+            "required": ["dst_port", "protocol", "bytes", "syn", "duration_us"],
+            "properties": {
+                "dst_port": {"type": "integer"},
+                "protocol": {"type": "integer"},
+                "bytes": {"type": "integer"},
+                "syn": {"type": "integer"},
+                "duration_us": {"type": "number"},
+            },
+        }},
         "estimated_lead_seconds": {"type": ["number", "null"]},
     },
 }

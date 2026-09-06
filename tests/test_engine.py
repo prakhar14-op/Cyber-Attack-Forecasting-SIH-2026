@@ -23,6 +23,10 @@ def test_technique_map_is_named_and_data_grounded():
     assert big["technique"] == "T1048"
     # benign has no technique
     assert EX.map_technique("benign", {})["technique"] is None
+    # an internal port sweep is discovery (T1046), not a login — T1021 is
+    # reserved for the pivot-login signature (no scan features).
+    assert EX.map_technique("lateral_movement", {"distinct_dst_ports": 40})["technique"] == "T1046"
+    assert EX.map_technique("lateral_movement", {})["technique"] == "T1021"
 
 
 def test_output_schema_rejects_embedding_dimensions():
@@ -33,7 +37,9 @@ def test_output_schema_rejects_embedding_dimensions():
         "host": "abc", "window_start": 10.0, "probability": 0.9, "stage": "recon",
         "technique": "T1046", "technique_name": "Network Service Discovery",
         "top_features": [{"feature": "distinct_dst_ips", "value": 40.0, "contribution": 1.2}],
-        "flagged_flows": [],
+        "top_windows": [{"window_start": 5.0, "probability": 0.8, "seconds_before_alert": 5.0}],
+        "flagged_flows": [{"dst_port": 80, "protocol": 6, "bytes": 500, "syn": 1,
+                           "duration_us": 1200.0}],
     }
     _validate(good)  # must not raise
 
@@ -95,6 +101,30 @@ def test_pcap_input_uses_full_features_and_verifies(tmp_path):
     assert max(f["probability"] for f in result["forecasts"]) > 0.5
     ok, first_bad = verify_cli.verify(tmp_path / "audit_chain.jsonl")
     assert ok, f"ledger failed at {first_bad}"
+
+
+@pytest.mark.skipif(
+    not (importlib.util.find_spec("xgboost")
+         and __import__("configs").resolve_path("artifacts/engine_model.json").exists()),
+    reason="engine model not trained — run python -m engine.train_engine",
+)
+def test_engine_refuses_to_log_on_weight_mismatch(fixture_csv, tmp_path, monkeypatch):
+    """M9.3: on a model-weight SHA-256 mismatch the engine raises and writes NO
+    ledger, so a record can never claim provenance it does not have."""
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+    import verify_weights as VW
+
+    from engine import predict
+
+    monkeypatch.setattr(VW, "verify", lambda *a, **k: (False, "engine_model.json"))
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        predict.predict_file(fixture_csv, out_dir=tmp_path)
+    assert not (tmp_path / "audit_chain.jsonl").exists(), (
+        "no ledger records may be written when the weight digest does not match"
+    )
 
 
 def test_top_contributing_windows_ranks_and_bounds_context():

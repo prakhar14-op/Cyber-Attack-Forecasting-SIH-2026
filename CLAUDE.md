@@ -68,7 +68,7 @@ data/        download_cic.sh, flow_features.py, packet_features.py,
 models/      tgn.py, graft.py, rssm.py, baselines.py, losses.py
 engine/      predict.py, explain.py, flag_flows.py, thresholds.py, technique_map.yaml
 eval/        harness.py, metrics.py, ablation.py, plots.py
-ledger/      ledger.py, merkle.py, anchor.py, verify_cli.py
+ledger/      ledger.py (chain + checkpoint anchoring), merkle.py, verify_cli.py
 app/         streamlit_app.py, assets/backup_capture.{csv,pcap}
 capture/     capture.sh, attack_scenarios.md, label_capture.py
 tests/       see below

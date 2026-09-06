@@ -13,7 +13,7 @@ completion of the attack, at a fixed false-positive budget.
 
 ## Status
 
-Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: **M6 — GRAFT encoder** (M0–M5 tagged).
+Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: **M12 — deliverables** (M0–M10 tagged; M11 lab-capture kit ready but untagged, awaiting a capture session).
 
 | Milestone | State |
 |---|---|
@@ -80,18 +80,23 @@ python -m venv .venv
 .venv\Scripts\pip install --no-index --find-links vendor -r requirements.txt
 ```
 
-Verify: `pytest tests/ -q` and `python -m tests.smoke` (both run with sockets blocked).
-**All 7 required tests pass**; the smoke run does 1,000 flows → forecasts → ledger →
-offline verification in ~9 s.
-
-Run the engine on a file, then verify the ledger with no network:
+Bootstrap the artifacts once, then verify offline (no network at any step):
 
 ```
 python -m engine.train_engine                 # fit + persist model, threshold, weight digests
 python -c "from engine import predict; predict.predict_file('tests/fixtures/mini.csv', 'run/')"
 python -m ledger.verify_cli run/audit_chain.jsonl
 streamlit run app/streamlit_app.py          # the offline demo
+pytest tests/ -q                             # and: python -m tests.smoke
 ```
+
+`pytest tests/ -q` and `python -m tests.smoke` both run with sockets blocked. The unit tests
+pass on a bare checkout; the **end-to-end** offline/smoke tests and the scaler-refit test need
+the trained artifacts (and, for the scaler test, the extracted dataset), so run
+`python -m engine.train_engine` first — until then those tests **skip with a bootstrap hint**
+rather than fail (the artifacts are gitignored — CLAUDE.md forbids committing weights). With the
+artifacts present, **all 7 required tests pass** and the smoke run does 1,000 flows → forecasts
+→ ledger → offline verification in ~9 s.
 
 ## Layout
 
@@ -123,9 +128,10 @@ does not have. Verify at any time with `python scripts/verify_weights.py`.
 
 | artefact | SHA-256 |
 |---|---|
-| `engine_model.json` | `efec13b6ec96697c4f50e4fd36a00a8c86813cc5ea2a10ea8dfbe9eba6bf9297` |
-| `graft.pt` | `cca98b225b5ef4ca1abbb0246de0f66805a290aef02331a40a95c311f9c689cf` |
+| `engine_model.json` | `bba2d237a32488999473883bdf67469236f4fb71fad9c6c15af77d5e6aad278e` |
+| `engine_model_flow.json` | `efec13b6ec96697c4f50e4fd36a00a8c86813cc5ea2a10ea8dfbe9eba6bf9297` |
 | `tgn_encoder.pt` | `d228090cd0929e2c95ce23caab5e07ec7b30cf93a426241fd1263efba07348fe` |
+| `graft.pt` | `cca98b225b5ef4ca1abbb0246de0f66805a290aef02331a40a95c311f9c689cf` |
 | `window_scaler.pkl` | `af558b0e8906b70c453c9760011bce046ed07b5865566f809a48bf1c6ec44b9c` |
 
 Regenerate from scratch (no weights needed):

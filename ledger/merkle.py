@@ -1,9 +1,12 @@
 """Merkle root over a batch of prediction records (M9.1).
 
-A per-minute Merkle root commits to every prediction (not just alerts), so a
-judge can verify the whole batch with one root while the hash chain gives
-per-alert tamper-evidence. Duplicated last leaf on odd counts (Bitcoin-style),
-domain-separated leaf/node hashing to prevent second-preimage tricks.
+A Merkle root commits to every record written to the ledger (one leaf per
+alert forecast), so a judge can verify the whole batch with one root while the
+hash chain gives per-record tamper-evidence. The root is anchored in each
+checkpoint and re-checked at verification (Ledger.verify_against_checkpoints),
+so it is an independently verified commitment. Duplicated last leaf on odd
+counts (Bitcoin-style), domain-separated leaf/node hashing to prevent
+second-preimage tricks.
 """
 
 from __future__ import annotations

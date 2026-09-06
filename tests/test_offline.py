@@ -11,8 +11,14 @@ import socket
 
 import pytest
 
-from tests._stubs import require_attr, require_module
+from tests._stubs import engine_artifacts_present, require_attr, require_module
 from tests.net_guard import NetworkAttempt
+
+pytestmark = pytest.mark.skipif(
+    not engine_artifacts_present(),
+    reason="engine artifacts not built — run `python -m engine.train_engine` "
+           "(they are gitignored; see README bootstrap)",
+)
 
 
 def test_inference_and_ledger_verify_run_end_to_end_with_sockets_blocked(

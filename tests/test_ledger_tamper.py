@@ -33,6 +33,9 @@ def test_single_edit_fails_at_index_and_full_rewrite_trips_checkpoints(tmp_path)
 
     ok, first_bad = ledger.verify()
     assert ok and first_bad is None, "freshly written chain must verify clean"
+    assert ledger.verify_against_checkpoints() is True, (
+        "a genuine chain must match its own anchored checkpoint (head + Merkle root)"
+    )
 
     # --- single-record edit: verification fails at exactly TAMPER_INDEX ---
     lines = chain_path.read_text(encoding="utf-8").splitlines()
@@ -41,10 +44,16 @@ def test_single_edit_fails_at_index_and_full_rewrite_trips_checkpoints(tmp_path)
     lines[TAMPER_INDEX] = json.dumps(record)
     chain_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    ok, first_bad = ledger_cls(chain_path, checkpoint_path=checkpoint_path).verify()
+    edited = ledger_cls(chain_path, checkpoint_path=checkpoint_path)
+    ok, first_bad = edited.verify()
     assert not ok, "edited record must fail verification"
     assert first_bad == TAMPER_INDEX, (
         f"verification must fail at index {TAMPER_INDEX}, reported {first_bad}"
+    )
+    # The anchored Merkle root also catches the content edit independently of the
+    # hash chain (the edited leaf changes the root even though the head is intact).
+    assert edited.verify_against_checkpoints() is False, (
+        "the anchored Merkle root must not match a chain with an edited record"
     )
 
     # --- full rewrite: a self-consistent forged chain passes verify() ---

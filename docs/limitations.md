@@ -1,8 +1,10 @@
 # Limitations
 
 Stated plainly, because a reviewer will find them anyway and because CLAUDE.md forbids
-fabricating results. Every number below is reproducible from `results/` via
-`python scripts/make_ablation_table.py`.
+fabricating results. Every number below traces to a file: the model-comparison figures via
+`python scripts/make_ablation_table.py` (over `results/*.json`), the per-horizon and RSSM
+figures from `results/forecast.json` / `results/world*.json`, and the flow-only vs full
+operating points from `artifacts/engine_threshold.json`. Nothing here is hand-entered.
 
 ## 1. Two of the seven kill-chain stages have no training data at all
 
@@ -36,10 +38,16 @@ packet-level features the PS itself mandates — TTL mean/variance, TCP window, 
 payload-size histogram, sequential-vs-random port-scan signature, retransmission counts —
 **cannot be computed from CSV input at all**.
 
-The deployed engine therefore runs a flow-only model (13 features, val AUROC 0.837) so that a
-CSV produces self-consistent forecasts, while the full 30-feature model (0.895) needs a PCAP.
-**Feed the demo a PCAP for full-quality forecasts**; the app warns explicitly when given a CSV.
-This is not a bug we can engineer away — it is a property of the input format.
+The deployed engine therefore runs a flow-only model so a CSV still produces self-consistent
+forecasts, while the full model uses all 30 features from a PCAP. On the matched **validation**
+split the two are close — flow-only **0.837** vs full **0.788** AUROC (`artifacts/engine_threshold.json`),
+so the flow model is not worse there. We still recommend a PCAP not for a raw AUROC win but
+because only the PCAP path carries the packet-level features the PS itself mandates (TTL, TCP
+window, fragment flags, payload histogram, scan signature, retransmissions), and the headline
+**test-split** numbers (full features: XGBoost 0.895, TGN encoder 0.954 AUROC, 2-of-2 episodes)
+are built on them. **Feed the demo a PCAP for the full, PS-compliant feature set**; the app warns
+explicitly when given a CSV. This is not a bug we can engineer away — it is a property of the
+input format.
 
 ## 4. The RSSM world model did not work; we ship the encoder instead
 
