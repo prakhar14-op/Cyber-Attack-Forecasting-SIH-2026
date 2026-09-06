@@ -65,6 +65,37 @@ def test_ledger_panel_tamper_then_detect(run):
     assert after["first_bad_index"] == 0
 
 
+def test_what_if_remove_host_ablates_that_host(run, fixture_csv, tmp_path):
+    """M10.4: removing a host drops its own alerts and never adds any."""
+    result, _ = run
+    ranking = panels.host_ranking(result)
+    top = str(ranking.iloc[0]["host"])
+
+    wi = panels.what_if_remove_host(fixture_csv, tmp_path, top)
+    after = wi["after"]
+    assert all(f["host"] != top for f in after["forecasts"]), "removed host still alerts"
+    assert after["n_alerts"] <= result["n_alerts"], "ablation must not add alerts"
+
+
+@pytest.mark.skipif(
+    not __import__("configs").resolve_path("app/assets/synthetic_demo.pcap").exists(),
+    reason="synthetic demo pcap not built",
+)
+def test_what_if_on_pcap_input_stays_on_full_path(tmp_path):
+    """Regression: the what-if on a PCAP must ablate on the extracted features,
+    not re-read the .pcap as a CSV (which raised UnicodeDecodeError)."""
+    from configs import resolve_path
+
+    pcap = resolve_path("app/assets/synthetic_demo.pcap")
+    result = panels.run_pipeline(pcap, tmp_path / "main")
+    top = str(panels.host_ranking(result).iloc[0]["host"])
+
+    wi = panels.what_if_remove_host(pcap, tmp_path / "wi", top)  # must not raise
+    after = wi["after"]
+    assert all(f["host"] != top for f in after["forecasts"])
+    assert after["n_alerts"] < result["n_alerts"], "the top host drove alerts"
+
+
 def test_results_card_reads_from_results_dir():
     """M10.6: the card is generated from results/*.json, not hardcoded."""
     fh = panels.forecast_horizons()

@@ -110,9 +110,15 @@ def _windows_from_input(cfg, input_path, anonymizer):
     return flows, wf
 
 
-def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
+def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None) -> dict:
     """Run the offline engine on one file. Writes out_dir/audit_chain.jsonl and
-    a forecasts.json; returns {n_flows, forecasts, n_alerts, ...}."""
+    a forecasts.json; returns {n_flows, forecasts, n_alerts, ...}.
+
+    exclude_host: what-if ablation (M10.4). When set, that host's own
+    (source, window) rows and every flow it participated in are dropped from the
+    already-extracted features before scoring — so the counterfactual runs
+    through the IDENTICAL path (CSV or PCAP; the input is never re-parsed) and is
+    exact for the per-(host, window) model."""
     cfg = load_config("data")
     set_seed(cfg["seed"])
     out_dir = Path(out_dir)
@@ -146,9 +152,16 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01) -> dict:
         )
 
     flows, wf = _windows_from_input(cfg, csv_path, anonymizer)
+    if exclude_host is not None:
+        exclude_host = str(exclude_host)
+        wf = wf[wf["host"].astype(str) != exclude_host].reset_index(drop=True)
+        if len(flows):
+            flows = flows[(flows["src_ip"].astype(str) != exclude_host)
+                          & (flows["dst_ip"].astype(str) != exclude_host)].reset_index(drop=True)
+
     feat_cols = W.feature_columns(cfg)
     X = scaler.transform(wf[feat_cols].to_numpy(dtype=np.float64)).astype(np.float32)
-    probs = booster.predict_proba(X)[:, 1]
+    probs = booster.predict_proba(X)[:, 1] if len(X) else np.empty(0, dtype=float)
 
     explainer = EX.ShapExplainer(booster, feat_cols)
     window_sec = cfg["windows"]["window_seconds"]

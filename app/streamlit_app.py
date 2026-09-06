@@ -179,8 +179,8 @@ if hosts:
         b.metric("Alerts after", wi["after"]["n_alerts"],
                  delta=wi["after"]["n_alerts"] - result["n_alerts"])
         st.caption(
-            f"Flows {wi['n_flows_before']:,} → {wi['n_flows_after']:,} after removing "
-            f"`{target}`. A large drop means that host drove the forecast."
+            f"Flows {result['n_flows']:,} → {wi['after']['n_flows']:,} after removing "
+            f"`{target}`. A large drop in alerts means that host drove the forecast."
         )
 
 # ---------------------------------------------------------------- ledger

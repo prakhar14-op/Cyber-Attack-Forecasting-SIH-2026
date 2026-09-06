@@ -67,28 +67,20 @@ def explanation_for(result: dict, host: str) -> dict | None:
 
 
 def what_if_remove_host(input_path, out_dir, host_to_remove: str, fpr_budget=0.01) -> dict:
-    """M10.4 / M8.7: re-run the pipeline with one host's flows ablated and
-    return both curves, so the analyst can see that host's contribution."""
-    from data import flow_features as FF
+    """M10.4 / M8.7: re-run the pipeline with one host ablated so the analyst can
+    see that host's contribution.
+
+    The ablation happens INSIDE the engine on the already-extracted features
+    (predict_file(exclude_host=...)), so the input file is never re-parsed — a
+    PCAP stays on the full-feature path instead of being (wrongly) read as a CSV,
+    and the before/after curves share feature semantics."""
     from engine import predict
 
-    cfg = load_config("data")
-    flows = FF.load_canonical(cfg, input_path)
-    kept = flows[(flows["src_ip"] != host_to_remove) & (flows["dst_ip"] != host_to_remove)]
-
-    ablated_csv = Path(out_dir) / "_whatif_input.csv"
-    _write_canonical_as_input(cfg, kept, ablated_csv)
-    after = predict.predict_file(ablated_csv, out_dir=Path(out_dir) / "whatif", fpr_budget=fpr_budget)
-    return {"removed_host": host_to_remove, "after": after,
-            "n_flows_before": int(len(flows)), "n_flows_after": int(len(kept))}
-
-
-def _write_canonical_as_input(cfg, flows: pd.DataFrame, path: Path) -> None:
-    """Write canonical flows back out in the raw column names the loader expects,
-    so the what-if re-run goes through the identical input path."""
-    inv = {canon: raw for canon, raw in cfg["schema"].items()}
-    out = flows.rename(columns=inv)
-    out.to_csv(path, index=False)
+    after = predict.predict_file(
+        input_path, out_dir=Path(out_dir) / "whatif",
+        fpr_budget=fpr_budget, exclude_host=host_to_remove,
+    )
+    return {"removed_host": host_to_remove, "after": after}
 
 
 def ledger_status(out_dir) -> dict:
