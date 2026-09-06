@@ -114,7 +114,7 @@ def evaluate_forecast() -> dict:
                 "fpr": fp / (fp + tn) if (fp + tn) else 0.0,
                 "lead_time_median": lt.median, "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
                 "episodes_detected": lt.n_detected, "episodes_total": lt.n_episodes,
-                "alerts_per_day": M.alerts_per_day(tp + fp, tk.n_host_windows, cfg),
+                "alerts_per_host_day": M.alerts_per_host_day(tp + fp, tk.n_host_windows, cfg),
             }
         result["horizons"][k] = block
         print(f"forecast k={k}: test AUROC {block['auroc_test']:.3f} "

@@ -6,7 +6,7 @@
 Trains on the train split, chooses the operating threshold from the VALIDATION
 benign host-windows at each FPR budget, and reports on the TEST split:
 F1/precision/recall at each budget, AUROC, ECE, median lead time (with IQR),
-and alerts/day. Writes results/<name>.json — the ablation table (M4.5) is built
+and alerts/host-day. Writes results/<name>.json — the ablation table (M4.5) is built
 from those, never hand-typed.
 
 Anti-leakage is structural: the scaler is fit on train only (eval.dataset), the
@@ -367,7 +367,7 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
             result[split_name][f"fpr_{budget}"] = {
                 "threshold": thr, "precision": precision, "recall": recall, "f1": f1,
                 "fpr": fpr, "n_alerts": tp + fp,
-                "alerts_per_day": M.alerts_per_day(tp + fp, split.n_host_windows, cfg),
+                "alerts_per_host_day": M.alerts_per_host_day(tp + fp, split.n_host_windows, cfg),
                 "lead_time_median": lt.median, "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
                 "episodes_detected": lt.n_detected, "episodes_total": lt.n_episodes,
             }

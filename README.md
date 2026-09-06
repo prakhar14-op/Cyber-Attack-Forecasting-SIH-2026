@@ -49,12 +49,12 @@ in seconds (higher is better); undetected episodes count as 0. The splits are
 attack-family-disjoint (train = bruteforce+DoS, test = bot), so this is a **cross-family
 generalisation** test — see [docs/benchmark_protocol.md](docs/benchmark_protocol.md).
 
-| model | F1 | precision | recall | AUROC | ECE | lead median (s) | episodes | alerts/day |
+| model | F1 | precision | recall | AUROC | ECE | lead median (s) | episodes | alerts/host/day |
 |---|---|---|---|---|---|---|---|---|
 | **tgn + linear head** | **0.565** | 0.451 | **0.754** | **0.954** | 0.033 | 5038 | 2/2 | 661 |
 | xgb | 0.309 | 0.295 | 0.325 | 0.895 | 0.021 | 5148 | 2/2 | 435 |
 | tgn_graft (M6, no Time2Vec — shipped config) | 0.095 | 0.172 | 0.066 | 0.895 | 0.023 | 1980 | 2/2 | 152 |
-| tgn_graft (M6, with Time2Vec — ablation) | 0.017 | 0.034 | 0.011 | 0.757 | 0.023 | 42 | 1/2 | 133 |
+| tgn_graft (M6, with Time2Vec — ablation) | 0.011 | 0.027 | 0.007 | 0.789 | 0.023 | 10 | 1/2 | 100 |
 | lstm | 0.016 | 0.024 | 0.012 | 0.564 | 0.023 | 4202 | 2/2 | 196 |
 | lr (graded) | 0.001 | 0.002 | 0.001 | 0.537 | 0.026 | 0 | 0/2 | 206 |
 

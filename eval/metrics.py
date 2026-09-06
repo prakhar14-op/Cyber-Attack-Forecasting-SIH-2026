@@ -199,13 +199,20 @@ def lead_time(
     )
 
 
-def alerts_per_day(n_alerts: int, n_host_windows: int, cfg: dict) -> float:
-    """Extrapolate alerts/day from the alert count over a set of host-windows.
+def alerts_per_host_day(n_alerts: int, n_host_windows: int, cfg: dict) -> float:
+    """Alerts per HOST-day (not per calendar day): the alert count normalised by
+    the observed host-time, so it is invariant to how many hosts were sampled.
 
     Uses the stride (each host-window advances `stride` seconds of one host's
-    timeline) to convert a host-window count into host-days observed.
+    timeline) to convert a host-window count into host-days observed. A whole
+    network's daily alert volume is this rate times the number of hosts — a
+    450-host network sees ~450x this figure (docs/benchmark_protocol.md).
     """
     stride = cfg["windows"]["stride_seconds"]
     host_seconds = n_host_windows * stride
     host_days = host_seconds / 86400.0
     return float(n_alerts / host_days) if host_days > 0 else 0.0
+
+
+# Back-compat alias (the metric was previously named alerts_per_day).
+alerts_per_day = alerts_per_host_day

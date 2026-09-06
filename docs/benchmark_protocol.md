@@ -53,10 +53,16 @@ known-optimistic (a near-nowcast).
 
 ## Honest disclosures
 
+- **Alerts/day is per HOST-day, not per network-day.** The `alerts_per_host_day` metric
+  normalises the alert count by the observed *host*-time (alert count ÷ host-days, where a
+  host-day = 17280 windows at the 5 s stride), so it is invariant to how many hosts were
+  sampled. A whole network's daily alert volume is this rate **times the number of hosts** —
+  a 450-host network sees ~450× the tabled figure. Read the column as "alerts a single host
+  raises per day", never as an operator's total daily load.
 - **Benign subsampling.** Per decision 001, ~30 benign hosts/day were fetched
   (`dataset.benign_hosts_per_day`, seed `dataset.host_sample_seed = 1337`), not the full
-  ~450. So **alerts/day is an extrapolation** (`alerts_per_day` scales the alert count by
-  the observed host-seconds); it is a within-sample rate, not a full-network projection.
+  ~450. Because the metric is per-host-day (above), the reported rate is a within-sample
+  host rate, not a full-network projection.
 - **Our features are CICFlowMeter-like, not byte-identical** to the published CSVs — the
   LR baseline runs on our matrix, which is the same matrix every model uses (what the PS
   grades).
@@ -65,5 +71,5 @@ known-optimistic (a near-nowcast).
 ## Metrics reported per model
 
 F1 / precision / recall / FPR at each budget · AUROC · ECE (+reliability data) · median
-lead time with IQR · alerts/day · episodes detected. Generalisation: `--holdout-family`
+lead time with IQR · alerts/host-day · episodes detected. Generalisation: `--holdout-family`
 retrains with one attack family removed from train (M4.6).

@@ -80,7 +80,9 @@ def test_lead_time_ignores_alerts_after_completion():
     assert res.per_episode_seconds == [0.0] and res.n_detected == 0
 
 
-def test_alerts_per_day(data_cfg):
-    # 5s stride: 17280 host-windows = 1 host-day; 10 alerts -> 10 alerts/day.
-    per_day = M.alerts_per_day(n_alerts=10, n_host_windows=17280, cfg=data_cfg)
+def test_alerts_per_host_day(data_cfg):
+    # 5s stride: 17280 host-windows = 1 host-day; 10 alerts -> 10 alerts/host-day.
+    per_day = M.alerts_per_host_day(n_alerts=10, n_host_windows=17280, cfg=data_cfg)
     assert per_day == pytest.approx(10.0)
+    # back-compat alias resolves to the same function.
+    assert M.alerts_per_day is M.alerts_per_host_day

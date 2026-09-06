@@ -38,7 +38,7 @@ def _row(result: dict, budget: float) -> dict:
         "lead_median_s": round(pt.get("lead_time_median", 0.0), 0),
         "lead_IQR_s": f"{lo:.0f}-{hi:.0f}",
         "episodes": f"{pt.get('episodes_detected', 0)}/{pt.get('episodes_total', 0)}",
-        "alerts/day": round(pt.get("alerts_per_day", 0.0), 1),
+        "alerts/host/day": round(pt.get("alerts_per_host_day", pt.get("alerts_per_day", 0.0)), 1),
     }
 
 

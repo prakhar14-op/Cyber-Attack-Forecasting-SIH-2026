@@ -50,7 +50,7 @@ def _fake_result(model, f1, lead, detected, total):
             "fpr_0.01": {
                 "f1": f1, "precision": f1, "recall": f1, "lead_time_median": lead,
                 "lead_time_iqr": [lead - 5, lead + 5], "episodes_detected": detected,
-                "episodes_total": total, "alerts_per_day": 12.0,
+                "episodes_total": total, "alerts_per_host_day": 12.0,
             },
         },
     }
