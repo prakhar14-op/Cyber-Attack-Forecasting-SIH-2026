@@ -49,6 +49,13 @@ class GRAFT(nn.Module):
 
         self.input_proj = nn.Linear(feature_dim, d)
         self.use_time2vec = bool(p.get("use_time2vec", True))  # M6.2 ablation switch
+        # Optional gap clamp (stride units). Time2Vec's linear component grows
+        # unbounded with delta_t: measured at init, its additive term is ~0.7x
+        # the feature projection at gap<=10 but 3.4x at gap 100 and 33x at gap
+        # 1000 — and ~2% of real gaps exceed 100 (diagnostics/delta_t_gap_stats
+        # .json). Clamping at ~p95 of real gaps keeps the time term informative
+        # without letting idle-gap outliers swamp the feature signal.
+        self.delta_t_clamp = p.get("delta_t_clamp")
         self.time2vec = Time2Vec(p["time2vec_dim"])
         self.time_proj = nn.Linear(p["time2vec_dim"], d)
 
@@ -82,6 +89,8 @@ class GRAFT(nn.Module):
 
         h = self.input_proj(x)
         if self.use_time2vec:
+            if self.delta_t_clamp is not None:
+                delta_t = delta_t.clamp(max=float(self.delta_t_clamp))
             h = h + self.time_proj(self.time2vec(delta_t))
 
         # Bool causal mask (True = masked = future), same dtype as the padding

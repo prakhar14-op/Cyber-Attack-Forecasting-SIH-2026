@@ -311,11 +311,16 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
     anneal_ep = cfg_g["loss"]["evidential_kl_anneal_epochs"]
     g = torch.Generator().manual_seed(cfg_g["seed"])
 
+    print(f"graft pos_weight (benign/attack in train segments): {float(class_w):.2f}",
+          flush=True)
     model.train()
     graft_curve = []
+    term_curves: dict[str, list[float]] = {}
     for epoch in range(cfg_g["optim"]["epochs"]):
         perm = torch.randperm(n, generator=g)
         tot = 0.0
+        term_tot: dict[str, float] = {}
+        n_batches = 0
         for i in range(0, n, bs):
             idx = perm[i : i + bs]
             opt.zero_grad()
@@ -324,7 +329,7 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
                 "attack": Yt[idx], "stage": St[idx], "features": Xt[idx],
                 "valid": Mt[idx],
             }
-            loss, _ = L.composite_loss(
+            loss, parts = L.composite_loss(
                 out, targets, cfg_g, anneal=min(1.0, epoch / anneal_ep),
                 class_weights=class_w,
             )
@@ -332,10 +337,19 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_g["optim"]["grad_clip"])
             opt.step()
             tot += float(loss.detach())
-        graft_curve.append(tot / max(1, n // bs))
-        print(f"graft epoch {epoch}: loss {graft_curve[-1]:.4f}", flush=True)
+            for k, v in parts.items():
+                term_tot[k] = term_tot.get(k, 0.0) + v
+            n_batches += 1
+        graft_curve.append(tot / max(1, n_batches))
+        for k, v in term_tot.items():
+            term_curves.setdefault(k, []).append(v / max(1, n_batches))
+        print(f"graft epoch {epoch}: total {graft_curve[-1]:.4f} | "
+              + " ".join(f"{k} {v[-1]:.4f}" for k, v in sorted(term_curves.items())),
+              flush=True)
     _dump_curve("tgn_graft_no_time2vec" if ablate_time2vec else "tgn_graft",
-                {"tgn_link_pred": tgn_curve, "graft": graft_curve})
+                {"tgn_link_pred": tgn_curve, "graft_total": graft_curve,
+                 "graft_terms": term_curves, "pos_weight": float(class_w),
+                 "loss_weights": dict(cfg_g["loss"])})
 
     from configs import resolve_path
 
@@ -403,6 +417,13 @@ def evaluate(model_name: str, holdout_family: str | None = None,
         scores = _tgn_graft_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs,
                                    config_name="train_graft_focused",
                                    persist_artifacts=False)
+    elif model_name == "tgn_graft_t2v_clamped":
+        # Diagnosis follow-up (Step 6): Time2Vec kept ON but with the gap
+        # clamped at p95 of real gaps — tests whether the unbounded time term,
+        # not gap-encoding itself, caused the with-T2V regression.
+        scores = _tgn_graft_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs,
+                                   config_name="train_graft_t2v_clamped",
+                                   persist_artifacts=False)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
 
@@ -455,8 +476,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model", required=True,
         choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec",
-                                              "tgn_graft_focused", "world", "forecast",
-                                              "fused"],
+                                              "tgn_graft_focused", "tgn_graft_t2v_clamped",
+                                              "world", "forecast", "fused"],
     )
     parser.add_argument("--holdout-family", default=None)
     parser.add_argument("--tag", default=None,

@@ -1,0 +1,50 @@
+# GRAFT with CLAMPED Time2Vec — controlled follow-up experiment for the
+# T2V-regression diagnosis (diagnosis_report.md, Step 6).
+#
+# Finding: T2V's linear component grows unbounded with the inter-window gap;
+# its additive term is ~0.7x the feature projection at gap<=10 strides but 3.4x
+# at gap 100 and 33x at gap 1000 (init-time measurement,
+# diagnostics/t2v_magnitude_init.json), while ~2% of real gaps exceed 100
+# (diagnostics/delta_t_gap_stats.json). Hypothesis: the unbounded time term —
+# not the idea of gap encoding — is what made with-T2V worse than no-T2V.
+#
+# This run is IDENTICAL to train_graft.yaml except:
+#   use_time2vec: true  + delta_t_clamp: 10   (p95 of real gaps, both splits)
+# Run: python -m eval.harness --model tgn_graft_t2v_clamped --tag <tag>
+# Never persists over the shipped artifacts; promotes only via a val-selected
+# ablation row.
+
+seed: 1337
+
+model:
+  d_model: 128
+  layers: 2
+  heads: 4
+  ffn_dim: 256
+  dropout: 0.1
+  causal: true
+  time2vec_dim: 8
+  use_time2vec: true
+  delta_t_clamp: 10        # p95 of real gaps in stride units — see header
+
+heads:
+  attack_prob: true
+  stage_classes: 7
+  evidential: dirichlet
+  reconstruction: true
+
+loss:
+  w_attack: 1.0
+  w_stage: 1.0
+  w_evidential: 1.0
+  w_reconstruction: 0.5
+  evidential_kl_anneal_epochs: 10
+  class_weighting: inverse_frequency
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.00001
+  batch_size: 64
+  epochs: 8
+  grad_clip: 1.0
+  early_stop_patience: 7
