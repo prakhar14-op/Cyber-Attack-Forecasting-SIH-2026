@@ -29,7 +29,7 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M8 engine + explainability | functional — offline predict → SHAP named-feature explanations → MITRE technique → ledger; **8.3 attention-over-windows and 8.7 what-if not yet built** (untagged) |
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
 | M10 offline app | done (`m10-app`) — Streamlit demo: upload → timeline → named-feature explanations → what-if → ledger verify/tamper → results card; telemetry disabled |
-| M11 lab capture | not started — needs real machines + written consent (the only source of `lateral_movement` / `exfiltration`) |
+| M11 lab capture | kit ready (capture.sh, scenarios, label_capture, consent); real capture needs hardware — **untagged**. A bundled *synthetic* demo PCAP stands in for the app |
 | M12 deliverables | docs done (architecture, limitations, demo script, 5 slides, weight digests); **clean-machine offline install verified** — outstanding: record the 2-min video, render architecture to PDF |
 
 ## Read this first
