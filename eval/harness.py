@@ -423,7 +423,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model", required=True,
-        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec", "world", "forecast"],
+        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec",
+                                              "world", "forecast", "fused"],
     )
     parser.add_argument("--holdout-family", default=None)
     args = parser.parse_args(argv)
@@ -436,6 +437,10 @@ def main(argv: list[str] | None = None) -> int:
         from eval import forecast
 
         return forecast.main()
+    if args.model == "fused":  # rank-mean fusion of tgn+xgb (reads their score dumps)
+        from eval import fused
+
+        return fused.main()
 
     result = evaluate(args.model, args.holdout_family)
 
