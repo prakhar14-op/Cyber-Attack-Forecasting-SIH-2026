@@ -44,6 +44,22 @@ def _row(result: dict, budget: float) -> dict:
 
 def build_table(budget: float = 0.01, results_dir: Path | None = None) -> pd.DataFrame:
     results = load_results(results_dir)
+    # This is the operating-point comparison table (baselines + encoder at
+    # horizon 0). Results that use the horizon schema (forecast, world) carry no
+    # `test` block and have their own presentation — the per-horizon table and
+    # the negative-result note — so including them here renders spurious
+    # all-zero rows. Drop them, and de-duplicate by (model, holdout) so a
+    # re-run variant (e.g. world_v2.json) cannot appear twice.
+    results = [r for r in results if "test" in r]
+    seen: set = set()
+    unique = []
+    for r in results:
+        marker = (r.get("model"), r.get("holdout_family"))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(r)
+    results = unique
     if not results:
         return pd.DataFrame()
     rows = [_row(r, budget) for r in results]

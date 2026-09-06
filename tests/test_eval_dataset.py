@@ -69,6 +69,21 @@ def test_ablation_table_sorts_by_lead_and_renders(tmp_path):
     assert "| model |" in md and "lr" in md and "xgb" in md
 
 
+def test_ablation_table_excludes_horizon_results_and_dedupes(tmp_path):
+    # baselines carry a `test` block; forecast/world use the horizon schema and
+    # must NOT render as all-zero rows in the comparison table. A re-run variant
+    # sharing a model name (world_v2) must not duplicate its row either.
+    (tmp_path / "xgb.json").write_text(json.dumps(_fake_result("xgb", 0.8, 10, 1, 2)))
+    (tmp_path / "forecast.json").write_text(json.dumps({"model": "forecast", "horizons": {}}))
+    (tmp_path / "world.json").write_text(json.dumps({"model": "world", "horizons": {}}))
+    (tmp_path / "world_v2.json").write_text(json.dumps({"model": "world", "horizons": {}}))
+
+    table = ablation.build_table(budget=0.01, results_dir=tmp_path)
+    assert list(table["model"]) == ["xgb"], "only test-block results belong here"
+    assert "forecast" not in list(table["model"])
+    assert list(table["model"]).count("world") == 0
+
+
 def test_lstm_segment_chunking_covers_every_row_once():
     from types import SimpleNamespace
 
