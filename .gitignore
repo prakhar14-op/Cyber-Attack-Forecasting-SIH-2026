@@ -39,3 +39,6 @@ run/
 # The synthetic demo capture IS bundled (small, deterministic, illustrative —
 # regenerable via `python -m capture.make_synthetic_demo`). NOT real capture data.
 !app/assets/synthetic_demo.pcap
+
+# Diagnostic data caches (regenerable; the committed evidence is the .png/.json)
+diagnostics/*.npz
