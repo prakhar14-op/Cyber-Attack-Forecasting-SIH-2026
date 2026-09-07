@@ -91,6 +91,11 @@ python -m venv .venv
 .venv\Scripts\pip install --no-index --find-links vendor -r requirements.txt
 ```
 
+> **Windows path-length caveat:** install into a venv at a **short path** (e.g.
+> `C:\sih26\.venv`) or enable Windows long-path support first — torch's include tree
+> nests deep enough to breach the 260-char MAX_PATH from a long directory, and pip
+> then fails mid-extract with `[Errno 2] ... epilogue_rescale_output.h`.
+
 Bootstrap the artifacts once, then verify offline (no network at any step):
 
 ```
