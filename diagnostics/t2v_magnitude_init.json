@@ -1,0 +1,35 @@
+{
+  "feat_std": 0.5801606178283691,
+  "per_dt": {
+    "1": {
+      "t2v_std": 0.4161,
+      "t2v_absmax": 1.23,
+      "ratio_t2v_to_feat_std": 0.717
+    },
+    "2": {
+      "t2v_std": 0.4,
+      "t2v_absmax": 1.117,
+      "ratio_t2v_to_feat_std": 0.689
+    },
+    "5": {
+      "t2v_std": 0.4664,
+      "t2v_absmax": 1.296,
+      "ratio_t2v_to_feat_std": 0.804
+    },
+    "10": {
+      "t2v_std": 0.4757,
+      "t2v_absmax": 1.08,
+      "ratio_t2v_to_feat_std": 0.82
+    },
+    "100": {
+      "t2v_std": 1.9612,
+      "t2v_absmax": 4.006,
+      "ratio_t2v_to_feat_std": 3.38
+    },
+    "1000": {
+      "t2v_std": 19.1469,
+      "t2v_absmax": 34.788,
+      "ratio_t2v_to_feat_std": 33.003
+    }
+  }
+}

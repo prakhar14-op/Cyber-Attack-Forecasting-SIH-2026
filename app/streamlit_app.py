@@ -280,8 +280,9 @@ if not card.empty:
     st.markdown("**Model comparison (test split, 1% FPR budget)**")
     st.dataframe(card, width="stretch")
 st.caption(
-    "Regenerate: `python scripts/make_ablation_table.py`. The RSSM world model "
-    "failed its lead-time gate and is not shipped — see docs/decisions/004."
+    "Regenerate: `python scripts/make_ablation_table.py`. Live scoring in this app uses the "
+    "deployed fast tier (XGBoost); the **fused** row is the eval-side headline model. The RSSM "
+    "world model failed its lead-time gate and is not shipped — see docs/decisions/004."
 )
 
 # ---------------------------------------------------------------- network graph

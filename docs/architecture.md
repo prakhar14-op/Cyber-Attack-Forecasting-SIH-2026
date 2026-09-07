@@ -52,7 +52,10 @@ recorded as a negative result (`docs/decisions/004`, `docs/limitations.md` §4).
 
 `engine/predict.py` runs fully offline from persisted artefacts: it builds features from the
 input file, scores each host-window against a threshold **fitted from an FPR budget on
-validation** (never a literal), and for each alert emits a JSON-schema-validated object:
+validation** (never a literal), and for each alert emits a JSON-schema-validated object.
+The deployed scorer is the cascade's **fast tier** (XGBoost — CPU-cheap and natively
+TreeSHAP-explainable); the fused TGN+XGB headline in §4 is the eval-side model, and
+engine-side fusion is roadmap. Each alert object carries:
 probability, stage, MITRE technique, top-5 **named** features, the top-3 contributing windows
 (where the attack was forming), and the flagged flows in that window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
 statement rules out black-box output, so explanations name `payload_hist_0` or
@@ -79,13 +82,21 @@ Test split (bot day), 1 % FPR budget:
 
 | model | AUROC | F1 | median lead | episodes |
 |---|---|---|---|---|
-| TGN encoder | **0.954** | 0.565 | 5038 s | 2/2 |
-| XGBoost | 0.895 | 0.309 | 5148 s | 2/2 |
-| LSTM | 0.564 | 0.016 | 4202 s | 2/2 |
-| Logistic regression (graded baseline) | 0.537 | 0.001 | 0 s | 0/2 |
+| **Fused (rank-mean TGN+XGB) — shipped** | **0.942** | **0.382** | 5008 s | 2/2 |
+| GRAFT + clamped Time2Vec (best single; val-gated) | 0.937 | 0.480 | 4170 s | 2/2 |
+| TGN encoder | 0.877 | 0.035 | 3595 s | 2/2 |
+| XGBoost | 0.872 | 0.140 | 4208 s | 2/2 |
+| LSTM | 0.764 | 0.015 | 4202 s | 2/2 |
+| Logistic regression (graded baseline) | 0.573 | 0.001 | 0 s | 0/2 |
 
-Forecasting ahead (shipped M7): AUROC **0.895 at k=4 (20 s ahead)** with **2/2 episodes and
-~65 min lead** — the ranking is essentially flat from nowcast to k=8, while a linear model
+All rows use one standardised anonymisation key (earlier pre-standardisation numbers were not
+reproducible and were retired). The headline is the parameter-free **fusion** — TGN and XGBoost
+make nearly uncorrelated errors (Spearman ρ ≈ 0.11), so averaging their score *ranks* beats
+both, and it is selected on validation, never on test.
+
+Forecasting ahead (shipped M7): AUROC **0.913 at k=4 (20 s ahead)** with **2/2 episodes and
+~80 min lead**; ranking stays ≈ 0.91 at k=8 (40 s ahead), where the fixed 1 % operating point
+stops firing (0/2) — disclosed, not hidden. A linear model
 cannot transfer across attack families at all.
 
 ## 5. Offline guarantee

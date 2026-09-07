@@ -10,11 +10,14 @@ model:
   dropout: 0.1
   causal: true            # the encoder is causal; bidirectional is a bug, not a choice
   time2vec_dim: 8
-  # M6.2 ablation verdict (results/tgn_graft{,_no_time2vec}.json): WITHOUT
-  # Time2Vec the cross-family test improves 0.757 -> 0.895 AUROC, 1/2 -> 2/2
-  # episodes — the gap encoding fits train-family timing that does not
-  # transfer. Per BUILD_PLAN ("every block must earn its row"), it ships OFF;
-  # flip to true only with a new ablation row justifying it.
+  # M6.2 verdict, revised by the root-cause diagnosis (diagnosis_report.md §3,6):
+  # UNBOUNDED Time2Vec hurt (its linear term grows without limit in the
+  # inter-window gap and swamps the features after idle gaps), but Time2Vec
+  # CLAMPED at the p95 real gap helps decisively on the test family — see
+  # configs/train_graft_t2v_clamped.yaml (F1 0.371 -> 0.480, 1/2 -> 2/2
+  # episodes, both seeds). It still ships OFF here because the clamped variant
+  # trails no-T2V on the VAL day (0.66-0.69 vs 0.822 AUROC, two seeds) and
+  # promotion is val-selected; flip only with a val-justified ablation row.
   use_time2vec: false
 
 heads:

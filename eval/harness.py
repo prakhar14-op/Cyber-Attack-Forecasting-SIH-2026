@@ -28,6 +28,31 @@ from eval import metrics as M
 from models import baselines
 
 
+def _dump_scores(cfg_eval, model_name, holdout, evals, scores) -> None:
+    """Phase-0 instrumentation: persist per-(host, window) val/test scores so the
+    threshold-transfer diagnosis and Phase-1 calibration can work on the real
+    score arrays without re-running the model. Written under results/scores/
+    (gitignored, offline)."""
+    out = resolve_path(cfg_eval["paths"]["results_dir"]) / "scores"
+    out.mkdir(parents=True, exist_ok=True)
+    suffix = f"_holdout-{holdout}" if holdout else ""
+    payload = {}
+    for name, split in evals.items():
+        payload[f"{name}_y"] = np.asarray(split.y)
+        payload[f"{name}_score"] = np.asarray(scores[name], dtype=float)
+        payload[f"{name}_host"] = np.asarray(split.host).astype(str)
+        payload[f"{name}_ws"] = np.asarray(split.window_start, dtype=float)
+    np.savez(out / f"{model_name}{suffix}.npz", **payload)
+
+
+def _dump_curve(name: str, curves: dict) -> None:
+    """Phase-0 instrumentation: persist per-epoch training loss curves so under-
+    vs over-fitting is diagnosable from artefacts, not just stdout."""
+    out = resolve_path(load_config("eval")["paths"]["results_dir"]) / "curves"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{name}.json").write_text(json.dumps(curves, indent=2), encoding="utf-8")
+
+
 def _flat_scores(model_name, cfg_b, train, evals):
     """Train a per-window model (lr/xgb) and score each eval Split."""
     model = baselines.build_model(model_name, cfg_b).fit(train.X, train.y)
@@ -98,7 +123,7 @@ def _lstm_scores(cfg, cfg_b, train_split, eval_splits):
     return scores
 
 
-def _tgn_scores(cfg, train_split, eval_splits):
+def _tgn_scores(cfg, train_split, eval_splits, seed=None, epochs=None):
     """M5.5: TGN memory embeddings + linear head, scored per (host, window).
 
     Link-prediction training on TRAIN events only; per-split snapshot passes
@@ -113,6 +138,13 @@ def _tgn_scores(cfg, train_split, eval_splits):
     from models import tgn as T
 
     cfg_t = load_config("train_tgn")
+    # GPU-experiment overrides (scripts/gpu_experiments.py): vary the training
+    # seed for seed-averaging, or the link-pred epoch budget — config stays the
+    # single source of truth for the shipped run (both None there).
+    if seed is not None:
+        cfg_t = {**cfg_t, "seed": int(seed)}
+    if epochs is not None:
+        cfg_t = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": int(epochs)}}
     set_seed(cfg_t["seed"])
     anonymizer = Anonymizer.from_config(cfg)
     msg_scaler = fit_scaler(cfg, split="train")  # train-only, deterministic
@@ -126,11 +158,14 @@ def _tgn_scores(cfg, train_split, eval_splits):
 
     # per-epoch node permutation: rebuild events (ids) each epoch; memory resets
     # inside train_link_pred at every epoch start.
+    tgn_curve = []
     for epoch in range(cfg_t["link_pred"]["epochs"]):
         events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
         one_epoch = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
         losses = T.train_link_pred(encoder, events, one_epoch)
+        tgn_curve.append(float(losses[0]))
         print(f"tgn link-pred epoch {epoch}: loss {losses[0]:.4f}", flush=True)
+    _dump_curve("tgn", {"tgn_link_pred": tgn_curve})
 
     # ---- head fit on train snapshot embeddings (subsampled benign) ----
     rng = np.random.RandomState(cfg_t["seed"])
@@ -182,7 +217,9 @@ def _delta_t_for_segments(split, index_map, stride):
     return delta
 
 
-def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = False):
+def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = False,
+                      seed=None, epochs=None, config_name: str = "train_graft",
+                      persist_artifacts: bool | None = None):
     """M6.6: GRAFT (causal transformer) over TGN embedding sequences, horizon 0.
 
     TGN is trained exactly as in the M5 row (link-pred, train events only,
@@ -201,9 +238,18 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
     from models import tgn as T
 
     cfg_t = load_config("train_tgn")
-    cfg_g = load_config("train_graft")
+    cfg_g = load_config(config_name)
     if ablate_time2vec:  # M6.2 ablation row: identical run, Time2Vec off
         cfg_g = {**cfg_g, "model": {**cfg_g["model"], "use_time2vec": False}}
+    if seed is not None:  # GPU-experiment override (seed-averaging)
+        cfg_t = {**cfg_t, "seed": int(seed)}
+        cfg_g = {**cfg_g, "seed": int(seed)}
+    if epochs is not None:  # GPU-experiment override (longer TGN link-pred)
+        cfg_t = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": int(epochs)}}
+    if persist_artifacts is None:
+        # only the untouched, shipped configuration may overwrite the M7 artifacts
+        persist_artifacts = (not ablate_time2vec and config_name == "train_graft"
+                             and seed is None and epochs is None)
     set_seed(cfg_g["seed"])
     anonymizer = Anonymizer.from_config(cfg)
     msg_scaler = fit_scaler(cfg, split="train")
@@ -218,10 +264,12 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
         num_nodes=pd.concat([train_flows["src_ip"], train_flows["dst_ip"]]).nunique(),
         msg_dim=len(msg_scaler.mean_),
     )
+    tgn_curve = []
     for epoch in range(cfg_t["link_pred"]["epochs"]):
         events = T.build_events(cfg_t, train_flows, anonymizer, epoch, msg_scaler)
         one = {**cfg_t, "link_pred": {**cfg_t["link_pred"], "epochs": 1}}
         loss = T.train_link_pred(encoder, events, one)[0]
+        tgn_curve.append(float(loss))
         print(f"tgn link-pred epoch {epoch}: loss {loss:.4f}", flush=True)
 
     def tgn_embeddings(split, split_name):
@@ -263,10 +311,16 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
     anneal_ep = cfg_g["loss"]["evidential_kl_anneal_epochs"]
     g = torch.Generator().manual_seed(cfg_g["seed"])
 
+    print(f"graft pos_weight (benign/attack in train segments): {float(class_w):.2f}",
+          flush=True)
     model.train()
+    graft_curve = []
+    term_curves: dict[str, list[float]] = {}
     for epoch in range(cfg_g["optim"]["epochs"]):
         perm = torch.randperm(n, generator=g)
         tot = 0.0
+        term_tot: dict[str, float] = {}
+        n_batches = 0
         for i in range(0, n, bs):
             idx = perm[i : i + bs]
             opt.zero_grad()
@@ -275,7 +329,7 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
                 "attack": Yt[idx], "stage": St[idx], "features": Xt[idx],
                 "valid": Mt[idx],
             }
-            loss, _ = L.composite_loss(
+            loss, parts = L.composite_loss(
                 out, targets, cfg_g, anneal=min(1.0, epoch / anneal_ep),
                 class_weights=class_w,
             )
@@ -283,12 +337,24 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg_g["optim"]["grad_clip"])
             opt.step()
             tot += float(loss.detach())
-        print(f"graft epoch {epoch}: loss {tot / max(1, n // bs):.4f}", flush=True)
+            for k, v in parts.items():
+                term_tot[k] = term_tot.get(k, 0.0) + v
+            n_batches += 1
+        graft_curve.append(tot / max(1, n_batches))
+        for k, v in term_tot.items():
+            term_curves.setdefault(k, []).append(v / max(1, n_batches))
+        print(f"graft epoch {epoch}: total {graft_curve[-1]:.4f} | "
+              + " ".join(f"{k} {v[-1]:.4f}" for k, v in sorted(term_curves.items())),
+              flush=True)
+    _dump_curve("tgn_graft_no_time2vec" if ablate_time2vec else "tgn_graft",
+                {"tgn_link_pred": tgn_curve, "graft_total": graft_curve,
+                 "graft_terms": term_curves, "pos_weight": float(class_w),
+                 "loss_weights": dict(cfg_g["loss"])})
 
     from configs import resolve_path
 
     art = resolve_path(cfg["paths"]["artifacts_dir"]); art.mkdir(parents=True, exist_ok=True)
-    if not ablate_time2vec:  # only the full model becomes the M7 artifact
+    if persist_artifacts:  # only the shipped configuration becomes the M7 artifact
         torch.save(encoder.state_dict(), art / "tgn_encoder.pt")
         torch.save(model.state_dict(), art / "graft.pt")
 
@@ -315,7 +381,11 @@ def _tgn_graft_scores(cfg, train_split, eval_splits, ablate_time2vec: bool = Fal
     return scores
 
 
-def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
+def evaluate(model_name: str, holdout_family: str | None = None,
+             tag: str | None = None, seed=None, tgn_epochs=None) -> dict:
+    """tag/seed/tgn_epochs are for GPU experiments (scripts/gpu_experiments.py):
+    a tagged run is named <model>__<tag> everywhere (dump, json, table row) and
+    the '__' convention keeps it OUT of the shipped ablation table."""
     cfg = load_config("data")
     cfg_eval = load_config("eval")
     cfg_b = load_config("baselines")
@@ -334,16 +404,34 @@ def evaluate(model_name: str, holdout_family: str | None = None) -> dict:
     if model_name == "lstm":
         scores = _lstm_scores(cfg, cfg_b, train, evals)
     elif model_name == "tgn":
-        scores = _tgn_scores(cfg, train, evals)
+        scores = _tgn_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs)
     elif model_name == "tgn_graft":
-        scores = _tgn_graft_scores(cfg, train, evals)
+        scores = _tgn_graft_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs)
     elif model_name == "tgn_graft_no_time2vec":
-        scores = _tgn_graft_scores(cfg, train, evals, ablate_time2vec=True)
+        scores = _tgn_graft_scores(cfg, train, evals, ablate_time2vec=True,
+                                   seed=seed, epochs=tgn_epochs)
+    elif model_name == "tgn_graft_focused":
+        # GPU-experiment variant: attack-head-focused loss + stronger
+        # regularisation (configs/train_graft_focused.yaml); never persists over
+        # the shipped artifacts. Candidate third fusion member only.
+        scores = _tgn_graft_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs,
+                                   config_name="train_graft_focused",
+                                   persist_artifacts=False)
+    elif model_name == "tgn_graft_t2v_clamped":
+        # Diagnosis follow-up (Step 6): Time2Vec kept ON but with the gap
+        # clamped at p95 of real gaps — tests whether the unbounded time term,
+        # not gap-encoding itself, caused the with-T2V regression.
+        scores = _tgn_graft_scores(cfg, train, evals, seed=seed, epochs=tgn_epochs,
+                                   config_name="train_graft_t2v_clamped",
+                                   persist_artifacts=False)
     else:
         scores = _flat_scores(model_name, cfg_b, train, evals)
 
+    run_name = model_name + (f"__{tag}" if tag else "")
+    _dump_scores(cfg_eval, run_name, holdout_family, evals, scores)
+
     # Threshold(s) from validation benign; applied to test.
-    result = {"model": model_name, "horizon": 0, "holdout_family": holdout_family,
+    result = {"model": run_name, "horizon": 0, "holdout_family": holdout_family,
               "operating_points": {}, "test": {}, "val": {}}
     for budget in cfg_eval["fpr_budgets"]:
         thr = M.threshold_at_fpr(val.y, scores["val"], budget)
@@ -387,9 +475,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model", required=True,
-        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec", "world", "forecast"],
+        choices=sorted(baselines.REGISTRY) + ["tgn", "tgn_graft", "tgn_graft_no_time2vec",
+                                              "tgn_graft_focused", "tgn_graft_t2v_clamped",
+                                              "world", "forecast", "fused"],
     )
     parser.add_argument("--holdout-family", default=None)
+    parser.add_argument("--tag", default=None,
+                        help="experiment tag: names the run <model>__<tag> and keeps it "
+                             "out of the shipped ablation table ('__' convention)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="override the TGN/GRAFT training seed (seed-averaging)")
+    parser.add_argument("--tgn-epochs", type=int, default=None,
+                        help="override the TGN link-pred epoch budget")
     args = parser.parse_args(argv)
 
     if args.model == "world":  # M7.7: multi-horizon RSSM (failed the gate — decision 004)
@@ -400,19 +497,24 @@ def main(argv: list[str] | None = None) -> int:
         from eval import forecast
 
         return forecast.main()
+    if args.model == "fused":  # rank-mean fusion of tgn+xgb (reads their score dumps)
+        from eval import fused
 
-    result = evaluate(args.model, args.holdout_family)
+        return fused.main([])
+
+    result = evaluate(args.model, args.holdout_family,
+                      tag=args.tag, seed=args.seed, tgn_epochs=args.tgn_epochs)
 
     cfg_eval = load_config("eval")
     out_dir = resolve_path(cfg_eval["paths"]["results_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = f"_holdout-{args.holdout_family}" if args.holdout_family else ""
-    out_path = out_dir / f"{args.model}{suffix}.json"
+    out_path = out_dir / f"{result['model']}{suffix}.json"
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2)
 
     test1 = result["test"].get("fpr_0.01", {})
-    print(f"{args.model}: test F1@1%FPR={test1.get('f1', 0):.3f} "
+    print(f"{result['model']}: test F1@1%FPR={test1.get('f1', 0):.3f} "
           f"recall={test1.get('recall', 0):.3f} AUROC={result['test']['auroc']:.3f} "
           f"lead_median={test1.get('lead_time_median', 0):.0f}s "
           f"({test1.get('episodes_detected')}/{test1.get('episodes_total')} episodes) "

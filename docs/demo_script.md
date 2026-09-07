@@ -19,7 +19,7 @@ Disconnect Wi-Fi / unplug Ethernet **before** starting the recording, and say so
 > "This forecasts network attacks *before* they finish. Not a flow classifier — the metric that
 > matters is lead time. And it runs with the network physically disconnected."
 
-Show `pytest tests/ -q` finishing: **81 passed, 1 skipped** (the skip is the
+Show `pytest tests/ -q` finishing: **93 passed, 1 skipped** (the skip is the
 env-gated tshark cross-check), then `python -m tests.smoke` →
 `1000 flows -> forecasts, ledger_verified=True, ~9s`. Both run with sockets blocked.
 
@@ -50,10 +50,10 @@ alert), the MITRE technique, and the flagged-flows table underneath.
 
 Scroll to the per-horizon table.
 
-> "This is the result. Forecasting **20 seconds ahead**, the model still ranks attacks at 0.895
-> AUROC and catches **both** attack episodes about 65 minutes before they complete. Trained on
+> "This is the result. Forecasting **20 seconds ahead**, the model still ranks attacks at 0.913
+> AUROC and catches **both** attack episodes about 80 minutes before they complete. Trained on
 > brute-force and DoS days — tested on a *bot* day it has never seen. A logistic regression on
-> the identical feature matrix is at 0.537: essentially random. Temporal host dynamics transfer
+> the identical feature matrix is at 0.573: essentially random. Temporal host dynamics transfer
 > across attack families; static flow signatures do not."
 
 ### 1:20–1:45 — The ledger (the integrity beat)

@@ -1,0 +1,46 @@
+# GRAFT "focused" retrain — GPU-experiment variant (scripts/gpu_experiments.py).
+#
+# Purpose: the shipped composite loss dilutes the binary attack signal across
+# four heads (attack + 7-class stage + Dirichlet KL + reconstruction), and the
+# transformer overfits the train families (M6.2 ablation). This variant focuses
+# the loss on the attack head and regularises harder, aiming NOT to beat the
+# plain TGN row but to become a decorrelated third fusion member.
+#
+# Rules: run via `--model tgn_graft_focused` only; it NEVER overwrites the
+# shipped artifacts; it ships only if the fused VAL metric improves (select on
+# val, report test once) and then earns its own ablation row.
+
+seed: 1337
+
+model:
+  d_model: 128
+  layers: 2
+  heads: 4
+  ffn_dim: 256
+  dropout: 0.2              # stronger than shipped 0.1 — fight train-family overfit
+  causal: true              # the encoder is causal; bidirectional is a bug, not a choice
+  time2vec_dim: 8
+  use_time2vec: false       # proven harmful cross-family (M6.2)
+
+heads:
+  attack_prob: true
+  stage_classes: 7          # must equal len(stages) in data.yaml
+  evidential: dirichlet
+  reconstruction: true
+
+loss:
+  # Focus: the attack head carries the gradient; auxiliary heads are muted.
+  w_attack: 1.0
+  w_stage: 0.0
+  w_evidential: 0.0
+  w_reconstruction: 0.1     # kept small as a mild regulariser / OOD signal
+  evidential_kl_anneal_epochs: 10
+  class_weighting: inverse_frequency
+
+optim:
+  lr: 0.0003
+  weight_decay: 0.0001      # 10x shipped — stronger regularisation
+  batch_size: 64
+  epochs: 25                # GPU-sized; the laptop CPU budget was 8
+  grad_clip: 1.0
+  early_stop_patience: 7
