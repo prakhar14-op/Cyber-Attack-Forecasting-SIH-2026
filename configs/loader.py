@@ -53,13 +53,29 @@ def set_seed(seed: int) -> list[str]:
         np.random.seed(seed)
         seeded.append("numpy")
 
+    # CUBLAS workspace must be pinned for deterministic CUDA matmul; harmless on
+    # CPU. setdefault + set here (set_seed runs before any CUDA context) — for a
+    # hard guarantee on GPU, also export it in the shell before the process.
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
     try:
         import torch
     except ImportError:
         pass
     else:
         torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(seed)  # no-op on a CPU build
+        # Seeding alone does not defeat nondeterministic parallel reductions
+        # (CPU multi-thread scatter/index sums) or cuDNN algorithm search — that
+        # is what let identical-seed twin runs diverge 0.853 vs 0.923. Lock the
+        # algorithms too. warn_only=True: an op with no deterministic kernel
+        # still runs (and is flagged) rather than hard-failing mid-training.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except Exception:  # older torch without the flag
+            pass
         seeded.append("torch")
 
     return seeded
