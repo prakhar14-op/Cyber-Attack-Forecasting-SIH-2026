@@ -69,7 +69,14 @@ head** is retained as a verified *ranking* capability (test AUROC ≈ 0.84 at k=
 fixed 1 % operating point does not fire (0/2) — and the oracle check confirms that is a ranking
 limit, not a recalibratable threshold, so we did not force a threshold fix. Seed-averaging on
 GPU is the documented path to recover a forward operating point. The RSSM is recorded as a
-negative result with its recipe, not quietly dropped.
+negative result with its recipe, not quietly dropped. (The k-step head and the RSSM are two
+*different* negative results: the RSSM failed its M7 gate and never shipped; the encoder forecast
+head ships as a ranking capability whose operating point does not fire.)
+
+The full statistical qualification of the lead-time headline — n = 2 sessions of one host,
+XGBoost-dominated detection, what AUROC ≈ 0.84 does and does not mean, and the evaluation-row
+multiplicity that inflates AUROC/F1 — is in
+[tier1_hardening_report.md → Limitations & Confidence](../tier1_hardening_report.md#limitations--confidence).
 
 ## Also worth knowing
 

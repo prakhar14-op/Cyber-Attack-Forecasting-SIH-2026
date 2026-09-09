@@ -103,7 +103,11 @@ PS's own definition (first alert on the attacking host → annotated completion)
 forecast head** is a verified *ranking* capability (test AUROC ≈ 0.84 at k = 4 and k = 8, i.e.
 20 s and 40 s ahead) but under determinism it fires **0/2 at the fixed 1 % budget**, and the
 oracle analysis shows that is a ranking limit, not a threshold that can be recalibrated —
-disclosed, not hidden; seed-averaging is the documented recovery path. A linear model
+disclosed, not hidden; seed-averaging is the documented recovery path. **Caveats** (full text in
+`tier1_hardening_report.md` → Limitations & Confidence): n = 2 episodes, both sessions of the
+same attacker host, so no confidence interval; the operating-point detection is carried by the
+XGBoost member rather than the temporal-graph encoder; and AUROC/F1 are inflated by evaluation-row
+multiplicity (de-duplicated: fused ≈ 0.89 AUROC, ≈ 0.04 F1 — lead time and 2/2 episodes unchanged). A linear model
 cannot transfer across attack families at all.
 
 ## 5. Offline guarantee

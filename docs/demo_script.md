@@ -55,7 +55,9 @@ Scroll to the per-horizon table.
 > Forecasting 20 and 40 seconds ahead is verified as a ranking capability at 0.84 AUROC; its
 > fixed operating point doesn't fire yet, and we say so. Trained on
 > brute-force and DoS days — tested on a *bot* day it has never seen. A logistic regression on
-> the identical feature matrix is at 0.573: essentially random. Temporal host dynamics transfer
+> the identical feature matrix is at 0.573: essentially random. Two caveats we state out loud:
+> that's two sessions of one attacker host, not a distribution, and the detection is carried by
+> the gradient-boosted member, not the graph encoder. Temporal host dynamics transfer
 > across attack families; static flow signatures do not."
 
 ### 1:20–1:45 — The ledger (the integrity beat)

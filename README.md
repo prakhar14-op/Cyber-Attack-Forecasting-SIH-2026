@@ -14,8 +14,14 @@ annotated completion of the attack, at a fixed false-positive budget. Shipped re
 **2/2 attack episodes flagged ~49 and ~91 minutes before completion (median ~70 min)** at a
 1 % FPR budget. That early warning is *precursor detection* by the horizon-0 fused model; the
 k-step head is a verified **ranking** capability (AUROC ≈ 0.84 at 20–40 s ahead) whose
-fixed-budget operating point does not yet fire — stated plainly, see
-[tier1_hardening_report.md](tier1_hardening_report.md).
+fixed-budget operating point does not yet fire (F1 ≤ 0.009, 0/2 episodes).
+
+> **Read the caveats with the number.** n = 2 episodes — and both are two sessions of the *same*
+> attacker host, so there is no confidence interval; detection is dominated by the **XGBoost**
+> member of the fusion rather than the novel temporal-graph component; and AUROC/F1 are inflated
+> by evaluation-row multiplicity (de-duplicated: fused AUROC ≈ 0.89, F1 ≈ 0.04 — lead time and
+> 2/2 unchanged). Full statement:
+> [tier1_hardening_report.md → Limitations & Confidence](tier1_hardening_report.md#limitations--confidence).
 
 ## Status
 

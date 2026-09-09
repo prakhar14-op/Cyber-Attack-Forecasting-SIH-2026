@@ -34,15 +34,78 @@ definition (first alert on the attacking host → annotated attack completion). 
 success metric is therefore **still genuinely met** (2/2 at ~49–91 min lead at 1 % FPR); what
 is no longer supportable is the *mechanistic* claim "predicts attacks 20–40 s ahead and
 catches both episodes" — the pre-fix forecast numbers (0.913 @ k=4, 2/2, ~80 min) were a
-nondeterministic draw. What survives on the forecasting side is a **ranking claim**: the
-encoder's k-step-ahead AUROC holds ≈ 0.84 at +20 s and +40 s (predictive signal exists), with
-seed-averaging on GPU as the documented recovery path for the forward operating point.
+nondeterministic draw.
+
+### Limitations & Confidence
+
+This section qualifies the lead-time table directly above it. Every number in that table
+carries all four caveats below; none of them is a footnote.
+
+**1. n = 2 is not a distribution — and it is really n = 2 sessions of one host.**
+There are exactly two attack episodes in the test split, and both are the *same attacker host*
+(18.219.211.138) in two sessions of the same bot campaign. "2/2 episodes" and "median ~70 min"
+therefore have **no confidence interval and no variance estimate** — a median over two points is
+not a statistic. The per-episode leads differ by a factor of ~1.9 (2,940 s vs 5,450 s), which is
+the only spread information available. These numbers must **not** be read as validated across
+attack diversity, across attacker hosts, or as an expected operating characteristic on unseen
+traffic. They are two observations, reported as two observations.
+
+**2. Detection is dominated by the XGBoost member — the least novel part of the architecture.**
+Within the fusion, the behavioural gradient-boosted model does essentially all the work at the
+operating point. Measured on the attacker host: **XGBoost alone fires on 19.3 % of ep1's windows;
+the deterministic TGN encoder fires on 0.1 %, misses ep0 entirely, and reaches ep1 only at 75 s
+lead.** The fused row's 2/2 capture is therefore carried by XGBoost, not by the temporal-graph /
+world-model component that constitutes the project's research contribution. Stated plainly:
+**our PS-compliance claim currently rests on the conventional baseline, not on the novel
+architecture.** The TGN's contribution is real but narrow — it decorrelates errors, which is what
+made the fused headline robust to the determinism fix (−0.009 where single models moved up to
+0.56) — but it is not what produces the graded result.
+
+**3. AUROC ≈ 0.84 at +20 s / +40 s does not mean k-step forecasting works.**
+It means only this: *ranking signal exists* at those horizons — the forecaster orders attack
+windows above benign ones better than chance. At **any FPR budget we can actually afford (1 %),
+that signal collapses to F1 ≤ 0.009 and 0/2 episodes**, and the oracle-threshold analysis (Part 2)
+confirms no threshold recovers it — it is a ranking limit, not a calibration bug. **The
+forecaster cannot currently produce a usable alert at a real operating threshold.** The AUROC
+figure must not be quoted anywhere in a way that implies working forward forecasting; wherever it
+appears it is to be labelled a ranking-signal-exists result and nothing more.
+
+**4. Reported AUROC and F1 are inflated by row multiplicity (found during this audit).**
+The effective evaluation unit is `(source_host, window, observing_capture)`, not the documented
+`(source_host, window)`: an external attacker appears as a source inside multiple victims'
+captures, so the same logical host-window contributes several rows with differing features
+(29.5 % of keys are duplicated; **8.7 rows per window for the attacker host** vs 1.42 average).
+De-duplicating by aggregating per host-window:
+
+| metric | as published (raw rows) | de-duplicated (max / mean) |
+|---|---|---|
+| fused AUROC | 0.933 | **0.888 / 0.895** |
+| fused F1@1 % | 0.172 | **0.040 / 0.038** |
+| xgb AUROC | 0.872 | **0.777 / 0.788** |
+| fused lead median | 4,195 s | 4,190 s |
+| fused episodes | 2/2 | **2/2 (unchanged)** |
+| ep1 first alert | +10 s | **+10 s (unchanged)** |
+
+So the **lead-time and episode results — the PS's graded metric — are robust to this**, but the
+**ranking/threshold metrics are not**: read fused AUROC as ≈ 0.89 and F1 as ≈ 0.04 on a
+de-duplicated basis. Whether to make de-duplication the shipped evaluation unit is an open
+decision (below), not silently applied.
+
+**What the sanity-check did rule out.** The ep1 "+10 s" alert was audited specifically for
+artifact status and is clean: the onset annotation is exogenous (hand-curated UNB timeline,
+never derived from any feature); the firing window spans [+10 s, +25 s], entirely post-onset,
+with **zero alerts in the 60 s before onset**; the model fires on only **0.9 %** of the attacker's
+windows during its 2.8 h idle gap between sessions (vs 0.8 % for all other hosts) and **18.3 %**
+once the attack starts — a ~20× behavioural response, not host-keying; and SHAP attributes the
+alert to a **~20× SYN burst** over the same host's idle baseline (`syn` +4.60, the top driver),
+with `net24_bucket` identical in both and contributing *negatively*. Mechanism: bot C2 session
+establishment. The number survives de-duplication exactly.
 
 **Recommended reframe for the pitch:** lead the deck with "detects infiltration **~49–91 min
 before attack completion (median ~70 min) at a 1 % false-positive budget, 2/2 episodes**,"
 present k-step forecasting as ranking-verified capability with the operating point as
-documented future work — and keep the existing fine print that both episodes are two sessions
-of the same attacker host.
+documented future work, and carry caveats 1–2 (n = 2 sessions of one host; XGBoost-dominated)
+wherever the lead-time number is claimed.
 
 ---
 
@@ -233,7 +296,24 @@ fact improve without it.
   `docs/limitations.md`, `docs/architecture.pdf` — regenerated table + the lead-time reframe +
   the determinism disclosure.
 
+## Two premises worth correcting
+
+- The k-step forecaster is **not** the RSSM. The RSSM (autoregressive world model) failed its
+  hard gate and was never shipped (decision 004). The shipped forecaster is the **TGN encoder
+  plus a linear head trained on labels shifted by k** (`eval/forecast.py`) — so "the
+  autoregressive RSSM is confirmed dead" conflates two separate negative results. The RSSM died
+  at M7; what this audit shows is that the *encoder forecast head*'s operating point is dead.
+- There is **no Mamba** in this build. CLAUDE.md explicitly lists Mamba among components not to
+  add without an ablation row. The novel components are the TGN temporal-graph encoder and the
+  GRAFT causal transformer.
+
 ## Open decisions for the human
+0. **Make de-duplication the shipped evaluation unit?** The audit found the effective unit is
+   `(host, window, observing_capture)`, inflating AUROC/F1 (fused 0.933 → ~0.89, F1 0.172 →
+   ~0.04) while leaving lead time and 2/2 episodes unchanged. Both readings are defensible —
+   per-sensor alerting is what a deployed IDS at each victim would actually do — but they are
+   not the same claim, and the docs currently publish the raw-row numbers with the caveat
+   attached. Changing the unit means regenerating the table a third time.
 1. **Drop `net24_bucket` from the shipped feature set?** Evidence says it would *raise* the
    graded metrics (xgb F1 0.140 → 0.392, recall 0.114 → 0.452, lead → ~86 min) and remove a
    key-artifact dependency, at the cost of 0.080 AUROC. Not done unilaterally — it retrains the

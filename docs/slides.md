@@ -58,6 +58,11 @@ PS's own lead-time definition. Forecasting **ahead** is verified as a **ranking*
 we state rather than hide. Every number is under one standardised key **and enforced training
 determinism** — repeated runs are bit-identical.
 
+*Caveats carried with this claim:* n = 2 episodes, both sessions of one attacker host (no CI);
+detection is carried by the XGBoost member, not the temporal-graph component; AUROC/F1 are
+inflated by row multiplicity (de-duplicated ≈ 0.89 / 0.04 — lead time and 2/2 unchanged).
+See `tier1_hardening_report.md` → Limitations & Confidence.
+
 > Temporal host *dynamics* transfer across attack families. Static flow signatures do not —
 > the linear baseline is at chance on an unseen family.
 
