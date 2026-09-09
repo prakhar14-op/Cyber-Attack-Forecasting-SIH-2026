@@ -27,8 +27,8 @@ carries bruteforce + DoS, validation infiltration, test bot. Two consequences:
 
 - The headline result is a genuine **cross-family generalisation** test, which is the honest
   hard version of the problem — and the reason the linear baseline collapses to 0.573 AUROC
-  while the fused temporal model reaches 0.942 (all under the standardised anonymisation key;
-  earlier pre-standardisation numbers were unreproducible and were retired).
+  while the fused temporal model reaches 0.933 (all under the standardised anonymisation key and
+  enforced training determinism; earlier unreproducible numbers were retired).
 - **Multi-class stage metrics are not meaningfully trainable**: `c2` never appears in the
   training split, so the stage head cannot be expected to emit it on val/test.
 
@@ -45,7 +45,7 @@ split the two are close — flow-only **0.847** vs full **0.806** AUROC (`artifa
 so the flow model is not worse there. We still recommend a PCAP not for a raw AUROC win but
 because only the PCAP path carries the packet-level features the PS itself mandates (TTL, TCP
 window, fragment flags, payload histogram, scan signature, retransmissions), and the headline
-**test-split** numbers (full features: XGBoost 0.872, fused model 0.942 AUROC, 2-of-2 episodes)
+**test-split** numbers (full features: XGBoost 0.872, fused model 0.933 AUROC, 2-of-2 episodes)
 are built on them. **Feed the demo a PCAP for the full, PS-compliant feature set**; the app warns
 explicitly when given a CSV. This is not a bug we can engineer away — it is a property of the
 input format.
@@ -61,10 +61,15 @@ recovered most of the ranking (k=8 AUROC 0.683 → 0.851) but still detected 0/2
 anonymisation key was standardised; the gate verdict — 0/2 episodes — is the decision-bearing
 fact and did not depend on the key.)
 
-We ship what actually works: the TGN temporal-graph encoder forecasting at horizon *k*, which
-holds AUROC ≈ 0.91 out to k=8 and catches **both** episodes with ~80 min lead at k=4 (20 s
-ahead); at k=8 the fixed 1 % operating point stops firing (0/2) — stated, not hidden. The RSSM
-is recorded as a negative result with its recipe, not quietly dropped.
+We ship what actually works — and, after the determinism fix, we are precise about which
+mechanism earns the headline. **Episode capture and lead time come from the horizon-0 fused
+classifier** (2/2 episodes, ~49 min and ~91 min before completion, median ~70 min): precursor
+detection on live windows, scored by the PS's own lead-time definition. The **k-step forecast
+head** is retained as a verified *ranking* capability (test AUROC ≈ 0.84 at k=4 and k=8) whose
+fixed 1 % operating point does not fire (0/2) — and the oracle check confirms that is a ranking
+limit, not a recalibratable threshold, so we did not force a threshold fix. Seed-averaging on
+GPU is the documented path to recover a forward operating point. The RSSM is recorded as a
+negative result with its recipe, not quietly dropped.
 
 ## Also worth knowing
 

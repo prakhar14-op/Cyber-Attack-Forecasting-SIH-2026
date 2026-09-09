@@ -96,6 +96,20 @@ def evaluate_forecast() -> dict:
 
         block = {"auroc_val": M.auroc(vk.y, pv), "auroc_test": M.auroc(tk.y, pt),
                  "n_attack_test": int(tk.y.sum())}
+
+        # Per-horizon score dump for the calibration/oracle diagnosis (Part 2):
+        # thresholds are ALREADY fitted per-horizon below, so k=8's miss is a
+        # val->test transfer question, not a reused-threshold bug — these dumps
+        # let scripts/threshold_diagnosis.py confirm which it is.
+        scores_dir = resolve_path(cfg_eval["paths"]["results_dir"]) / "scores"
+        scores_dir.mkdir(parents=True, exist_ok=True)
+        np.savez(scores_dir / f"forecast_k{k}.npz",
+                 val_y=np.asarray(vk.y), val_score=np.asarray(pv, dtype=float),
+                 val_host=np.asarray(vk.host).astype(str),
+                 val_ws=np.asarray(vk.window_start, dtype=float),
+                 test_y=np.asarray(tk.y), test_score=np.asarray(pt, dtype=float),
+                 test_host=np.asarray(tk.host).astype(str),
+                 test_ws=np.asarray(tk.window_start, dtype=float))
         for budget in cfg_eval["fpr_budgets"]:
             thr = M.threshold_at_fpr(vk.y, pv, budget)
             pred = pt >= thr

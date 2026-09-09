@@ -82,21 +82,28 @@ Test split (bot day), 1 % FPR budget:
 
 | model | AUROC | F1 | median lead | episodes |
 |---|---|---|---|---|
-| **Fused (rank-mean TGN+XGB) — shipped** | **0.942** | **0.382** | 5008 s | 2/2 |
-| GRAFT + clamped Time2Vec (best single; val-gated) | 0.937 | 0.480 | 4170 s | 2/2 |
-| TGN encoder | 0.877 | 0.035 | 3595 s | 2/2 |
+| **Fused (rank-mean TGN+XGB) — shipped** | **0.933** | **0.172** | 4195 s | 2/2 |
 | XGBoost | 0.872 | 0.140 | 4208 s | 2/2 |
+| TGN encoder | 0.840 | 0.009 | 38 s | 1/2 |
 | LSTM | 0.764 | 0.015 | 4202 s | 2/2 |
+| GRAFT (shipped config) | 0.701 | 0.013 | 1035 s | 2/2 |
 | Logistic regression (graded baseline) | 0.573 | 0.001 | 0 s | 0/2 |
 
-All rows use one standardised anonymisation key (earlier pre-standardisation numbers were not
-reproducible and were retired). The headline is the parameter-free **fusion** — TGN and XGBoost
+All rows use one standardised anonymisation key **and enforced training determinism** — repeated
+identical-seed runs are bit-identical, so these are reproducible values, not single draws
+(`tier1_hardening_report.md`). The headline is the parameter-free **fusion** — TGN and XGBoost
 make nearly uncorrelated errors (Spearman ρ ≈ 0.11), so averaging their score *ranks* beats
-both, and it is selected on validation, never on test.
+both, and it is selected on validation, never on test. That decorrelation is also what made the
+headline robust: the determinism fix cost the encoder 0.037 AUROC but the fusion only 0.009.
 
-Forecasting ahead (shipped M7): AUROC **0.913 at k=4 (20 s ahead)** with **2/2 episodes and
-~80 min lead**; ranking stays ≈ 0.91 at k=8 (40 s ahead), where the fixed 1 % operating point
-stops firing (0/2) — disclosed, not hidden. A linear model
+**Lead time — what is actually claimed.** The 2/2 episode capture and **median ~70 min lead**
+(per-episode ~49 min / ~91 min) come from the **horizon-0 fused classifier**: this is
+*precursor detection* — alerts fire on early-episode windows as they occur — measured by the
+PS's own definition (first alert on the attacking host → annotated completion). The **k-step
+forecast head** is a verified *ranking* capability (test AUROC ≈ 0.84 at k = 4 and k = 8, i.e.
+20 s and 40 s ahead) but under determinism it fires **0/2 at the fixed 1 % budget**, and the
+oracle analysis shows that is a ranking limit, not a threshold that can be recalibrated —
+disclosed, not hidden; seed-averaging is the documented recovery path. A linear model
 cannot transfer across attack families at all.
 
 ## 5. Offline guarantee

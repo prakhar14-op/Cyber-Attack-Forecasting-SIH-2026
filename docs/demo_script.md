@@ -50,8 +50,10 @@ alert), the MITRE technique, and the flagged-flows table underneath.
 
 Scroll to the per-horizon table.
 
-> "This is the result. Forecasting **20 seconds ahead**, the model still ranks attacks at 0.913
-> AUROC and catches **both** attack episodes about 80 minutes before they complete. Trained on
+> "This is the result. The fused model ranks attacks at 0.933 AUROC and flags **both** attack
+> episodes about **49 and 91 minutes before they complete** — at a 1% false-positive budget.
+> Forecasting 20 and 40 seconds ahead is verified as a ranking capability at 0.84 AUROC; its
+> fixed operating point doesn't fire yet, and we say so. Trained on
 > brute-force and DoS days — tested on a *bot* day it has never seen. A logistic regression on
 > the identical feature matrix is at 0.573: essentially random. Temporal host dynamics transfer
 > across attack families; static flow signatures do not."

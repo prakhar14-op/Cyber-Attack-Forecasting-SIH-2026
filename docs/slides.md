@@ -38,22 +38,25 @@ PCAP/CSV → streaming extractor → 30 window-bounded features → TGN temporal
 
 ---
 
-## Slide 3 — Results: forecasting generalises, flow signatures do not
+## Slide 3 — Results: temporal dynamics generalise, flow signatures do not
 
 Test = a **bot** day; trained on **brute-force + DoS** days. Nothing about the test family was
 seen in training. 1 % FPR budget.
 
 | model | AUROC | median lead | episodes |
 |---|---|---|---|
-| **Fused (TGN + XGBoost, rank-mean)** | **0.942** | 5008 s | **2/2** |
-| GRAFT + clamped Time2Vec *(best single)* | 0.937 | 4170 s | 2/2 |
-| TGN temporal encoder | 0.877 | 3595 s | 2/2 |
+| **Fused (TGN + XGBoost, rank-mean)** | **0.933** | 4195 s (~70 min) | **2/2** |
 | XGBoost | 0.872 | 4208 s | 2/2 |
+| TGN temporal encoder | 0.840 | 38 s | 1/2 |
+| GRAFT (shipped config) | 0.701 | 1035 s | 2/2 |
 | Logistic regression *(graded baseline)* | 0.573 | 0 s | **0/2** |
 
-**Forecasting ahead:** at **k=4 (20 s ahead)** the model holds **0.913 AUROC** and still catches
-**both** episodes ~**80 minutes** before completion. All numbers under one standardised,
-reproducible anonymisation key.
+**Early warning:** both attack episodes are flagged **~49 and ~91 minutes before completion**
+(median ~70 min) at a 1 % false-positive budget — *precursor detection* on live windows, the
+PS's own lead-time definition. Forecasting **ahead** is verified as a **ranking** capability
+(AUROC ≈ 0.84 at 20 s and 40 s ahead); its fixed-budget operating point does not yet fire, which
+we state rather than hide. Every number is under one standardised key **and enforced training
+determinism** — repeated runs are bit-identical.
 
 > Temporal host *dynamics* transfer across attack families. Static flow signatures do not —
 > the linear baseline is at chance on an unseen family.

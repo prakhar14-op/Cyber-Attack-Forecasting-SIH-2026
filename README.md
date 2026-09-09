@@ -2,14 +2,20 @@
 
 **SIH 2026 · Problem SIH26153 (NTRO) · Blockchain & Cybersecurity**
 
-Given network traffic windows up to time *t*, this system forecasts the infiltration
-probability and MITRE ATT&CK stage at *t+1 … t+8* windows (40 s ahead), explains every
-forecast in terms of named flags, ports and flow statistics, and writes every forecast
-to a tamper-evident, offline-verifiable ledger.
+Given network traffic windows up to time *t*, this system scores the infiltration
+probability and MITRE ATT&CK stage per (host, window), explains every alert in terms of
+named flags, ports and flow statistics, and writes it to a tamper-evident,
+offline-verifiable ledger. A k-step head additionally ranks risk at *t+1 … t+8* windows
+(up to 40 s ahead).
 
-It is a **forecaster, not a flow classifier**: the metric that defines success is
-**lead time** — seconds between the first alert on the attacking host and the annotated
-completion of the attack, at a fixed false-positive budget.
+It is judged as an **early-warning system, not a flow classifier**: the metric that defines
+success is **lead time** — seconds between the first alert on the attacking host and the
+annotated completion of the attack, at a fixed false-positive budget. Shipped result:
+**2/2 attack episodes flagged ~49 and ~91 minutes before completion (median ~70 min)** at a
+1 % FPR budget. That early warning is *precursor detection* by the horizon-0 fused model; the
+k-step head is a verified **ranking** capability (AUROC ≈ 0.84 at 20–40 s ahead) whose
+fixed-budget operating point does not yet fire — stated plainly, see
+[tier1_hardening_report.md](tier1_hardening_report.md).
 
 ## Status
 
@@ -24,7 +30,7 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M4 eval harness + baselines | done — LR/XGBoost/LSTM, lead-time-at-fixed-FPR harness; **first demoable point** (see Results) |
 | M5 TGN | done (`m5-tgn`) — early attacker-host alerts (2/2 episodes); member of the fused headline |
 | M6 GRAFT | done (`m6-graft`) — causal encoder, test_no_future_leakage green; Time2Vec ablated OFF |
-| M7 world model | done (`m7-forecast`) — RSSM failed the hard gate (decision 004); ships encoder forecasting at horizon k |
+| M7 world model | done (`m7-forecast`) — RSSM failed the hard gate (decision 004); ships encoder k-step **ranking** (AUROC ≈ 0.84 at k=4/8), operating point 0/2 at the 1 % budget — disclosed |
 
 | M8 engine + explainability | done (`m8-engine`) — offline predict → SHAP named features → top contributing windows (8.3) → MITRE technique → what-if → ledger; JSON-schema-validated output |
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
@@ -48,35 +54,36 @@ hand-entered. Regenerate: `python scripts/make_ablation_table.py --budget 0.01`.
 better); undetected episodes count as 0. The splits are attack-family-disjoint (train =
 bruteforce+DoS, test = bot), so this is a **cross-family generalisation** test — see
 [docs/benchmark_protocol.md](docs/benchmark_protocol.md). All rows are measured under one
-**standardised anonymisation key** (the pre-standardisation numbers were not reproducible and
-were retired — see [diagnosis_report.md](diagnosis_report.md) §0).
+**standardised anonymisation key** and — new in this revision — under **enforced training
+determinism**: every torch-trained row was regenerated after we found that identical-seed runs
+were diverging (see [tier1_hardening_report.md](tier1_hardening_report.md) Part 1). Repeated
+runs are now **bit-identical**, so these numbers are reproducible rather than single draws.
 
 | model | F1@0.01 | precision@0.01 | recall@0.01 | AUROC | ECE | lead_median_s | lead_IQR_s | episodes | alerts/host/day |
 |---|---|---|---|---|---|---|---|---|---|
-| fused | 0.382 | 0.394 | 0.37 | 0.942 | 0.021 | 5008.0 | 4781-5234 | 2/2 | 371.5 |
+| fused | 0.172 | 0.268 | 0.127 | 0.933 | 0.021 | 4195.0 | 3568-4822 | 2/2 | 187.1 |
 | xgb | 0.14 | 0.183 | 0.114 | 0.872 | 0.022 | 4208.0 | 3581-4834 | 2/2 | 246.6 |
+| tgn | 0.009 | 0.033 | 0.005 | 0.84 | 0.042 | 38.0 | 19-56 | 1/2 | 65.1 |
 | lstm | 0.015 | 0.029 | 0.01 | 0.764 | 0.023 | 4202.0 | 3579-4826 | 2/2 | 145.3 |
-| tgn_graft_t2v_clamped | 0.48 | 0.397 | 0.607 | 0.937 | 0.022 | 4170.0 | 3535-4805 | 2/2 | 604.4 |
-| tgn | 0.035 | 0.065 | 0.024 | 0.877 | 0.038 | 3595.0 | 3288-3902 | 2/2 | 144.5 |
-| tgn_graft_no_time2vec | 0.371 | 0.369 | 0.373 | 0.923 | 0.019 | 42.0 | 21-64 | 1/2 | 399.5 |
+| tgn_graft | 0.013 | 0.023 | 0.009 | 0.701 | 0.023 | 1035.0 | 935-1135 | 2/2 | 161.3 |
+| tgn_graft_no_time2vec | 0.013 | 0.023 | 0.009 | 0.701 | 0.023 | 1035.0 | 935-1135 | 2/2 | 161.3 |
 | lr | 0.001 | 0.002 | 0.001 | 0.573 | 0.026 | 0.0 | 0-0 | 0/2 | 112.3 |
-| tgn_graft | 0.008 | 0.021 | 0.005 | 0.853 | 0.023 | 0.0 | 0-0 | 0/2 | 97.7 |
+| tgn_graft_t2v_clamped | 0.014 | 0.024 | 0.01 | 0.38 | 0.023 | 30.0 | 15-45 | 1/2 | 156.9 |
 
 Reading: the shipped headline is the **fused model** (rank-mean of the TGN encoder and
-XGBoost, parameter-free, nothing fitted on val/test for the ranking): AUROC 0.942, both
-attack episodes caught **~83 min** before completion, and the best **validation** AUROC of any
-row — it is selected on val, never on test. The **class-weighted logistic regression** (the
-PS-graded baseline) stays near-random cross-family (0.573). The **TGN encoder** alone has
-modest window-recall but places its few alerts *early and on the attacker host* (per-episode
-leads 2980 s / 4210 s, 2/2) — the property fusion exploits. `tgn_graft` and
-`tgn_graft_no_time2vec` are **the same configuration run twice**: the 0.853-vs-0.923 spread is
-the honest measure of training variance in the 3-epoch graph encoder, and is itself an argument
-for the fusion/seed-averaging approach. **`tgn_graft_t2v_clamped`** (Time2Vec with the gap
-clamped at the p95 of real inter-window gaps) is the strongest *single* model on test
-(F1 0.480, 2/2) — the clamp finding is documented in [diagnosis_report.md](diagnosis_report.md)
-§3 — but its **val** AUROC (0.66–0.69 across two seeds) trails the no-T2V variant (0.822), a
-real val/test asymmetry, so it is *not* promoted over the fused headline. Val (the near-silent
-infiltration day) is much harder for every model — an honest asymmetry, not uniform inflation.
+XGBoost, parameter-free, nothing fitted on val/test for the ranking): AUROC **0.933**, both
+attack episodes caught (**median ~70 min**, per-episode ~49 min and ~91 min before completion),
+and the best **validation** AUROC of any row — it is selected on val, never on test. The
+**class-weighted logistic regression** (the PS-graded baseline) stays near-random cross-family
+(0.573). The fusion is the point: its members' errors are nearly uncorrelated, so when the
+determinism fix cost the TGN encoder 0.037 AUROC the **fused headline moved only −0.009**
+(0.942 → 0.933) while single-model rows swung by up to 0.56. `tgn_graft` and
+`tgn_graft_no_time2vec` are **the same configuration** and now produce **bit-identical** rows —
+that identity is the determinism proof; before the fix these same two runs read 0.853 vs 0.923.
+**`tgn_graft_t2v_clamped`** collapses to 0.380 under determinism (it had read 0.937 as a
+nondeterministic draw), which retroactively vindicates the decision not to promote it on a
+test-set win. Val (the near-silent infiltration day) is much harder for every model — an honest
+asymmetry, not uniform inflation.
 One deployment note: the **live demo engine scores with the cascade's fast tier** (XGBoost —
 CPU-cheap, natively TreeSHAP-explainable); the fused headline is the eval-side model,
 regenerated by `scripts/make_ablation_table.py`. Engine-side fusion is roadmap.
@@ -146,8 +153,8 @@ does not have. Verify at any time with `python scripts/verify_weights.py`.
 |---|---|
 | `engine_model.json` | `10f5873af8bda8758c2a78c859738d978620f3bd25508d66cd4daba77f2dfdc7` |
 | `engine_model_flow.json` | `b263d7aca6b5ae1414733e26b2d4ccb71dccdf35c241c78a9b1112e516840462` |
-| `tgn_encoder.pt` | `d92637734b4e651ee9bbe4bb29b33c4d2572fd1637eee9b9e57876ea8d9b2496` |
-| `graft.pt` | `f14cd72dfcbd128383a0ecbe2a31f31f50aa88c5577840fc435589d5453794a4` |
+| `tgn_encoder.pt` | `964575cd9bebc27fedb7fb33d63dee642171e9f3e380c7735e9ae572be44c31a` |
+| `graft.pt` | `28cc45d6316a50495dbd6a324d37b70b5a7eafb8dc8f989166de2ddd378df4b1` |
 | `window_scaler.pkl` | `5fa868fc75237310987df16c7c290593584c7daa410a5a60d69ee489a4d97292` |
 
 Regenerate from scratch (no weights needed):
