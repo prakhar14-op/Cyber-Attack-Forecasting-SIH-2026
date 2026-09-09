@@ -5,6 +5,8 @@ weights/
 *.pt
 *.pth
 *.keras
+.DS_Store
+._*
 
 # Raw dataset downloads and derived artifacts
 data/raw/
@@ -42,3 +44,6 @@ run/
 
 # Diagnostic data caches (regenerable; the committed evidence is the .png/.json)
 diagnostics/*.npz
+
+.DS_Store
+._*
