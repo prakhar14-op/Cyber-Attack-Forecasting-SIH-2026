@@ -24,6 +24,35 @@ import pandas as pd
 
 from configs import load_config, resolve_path, set_seed
 
+# An alert whose window matches no stage rule. NOT one of the seven stage
+# classes (configs/data.yaml `stages` is the label encoding for the trained
+# heads and must not grow an eighth entry) — it is the honest outcome of a rule
+# set that did not fire, and carries no MITRE technique.
+UNCLASSIFIED_STAGE = "unclassified"
+
+# Hosts in the forecasts, the graph and forecasts.json are the addresses an
+# analyst has to act on; nothing on this path pseudonymises them. Only the
+# LEDGER does (M9.2, under its own key). The value reported in the run summary is
+# MEASURED off the hosts actually emitted (_hosts_pseudonymised) rather than
+# declared here, so a UI caption cannot claim a privacy property the data does
+# not have; this constant is the design expectation a test pins that measurement
+# against.
+HOSTS_PSEUDONYMISED = False
+
+# forecasts.json stays a bare schema-validated ARRAY of forecast objects — one
+# entry per alert and nothing else. The run-level facts that are in no single
+# forecast — coverage of the input, the alert threshold, whether the hosts are
+# pseudonyms — go in a sibling file rather than in a wrapper object around that
+# array, so a SAVED run carries them too: an in-process caller is not the only
+# reader that must be able to tell "0 alerts" from "saw nothing".
+#
+# Nothing in this repo reads either file back (app/panels.py renders the dict
+# predict_file RETURNS); they are the artifact of a run, for an analyst, a judge
+# or an external tool to inspect afterwards. That is why the shape is pinned by
+# tests rather than by a caller that would break if it changed.
+FORECASTS_FILE = "forecasts.json"
+RUN_SUMMARY_FILE = "run_summary.json"
+
 OUTPUT_SCHEMA = {
     "type": "object",
     "required": ["host", "window_start", "probability", "stage", "technique",
@@ -32,7 +61,8 @@ OUTPUT_SCHEMA = {
         "host": {"type": "string"},
         "window_start": {"type": "number"},
         "probability": {"type": "number", "minimum": 0, "maximum": 1},
-        "stage": {"type": "string"},
+        "stage": {"type": "string",
+                  "enum": [*load_config("data")["stages"], UNCLASSIFIED_STAGE]},
         "technique": {"type": ["string", "null"]},
         "technique_name": {"type": "string"},
         "top_features": {"type": "array", "items": {
@@ -85,16 +115,48 @@ def _load_engine(cfg, variant: str):
     return booster, scaler, fname
 
 
+def _coverage(n_parsed: int, drops: dict | None) -> dict:
+    """What the extractor could NOT read, so silence is never read as safety.
+
+    A capture whose frames the IPv4 parser skips (IPv6 above all) yields no
+    host-windows and therefore no alerts; the run summary must report that as
+    unseen traffic rather than as a clean result.
+
+    `drops` is None when the table carries no drop history at all (the counts
+    ride on `.attrs`, which pandas strips as soon as a frame is combined with one
+    that has none). Unknown is not clean: the counts come
+    back None under `known: False` rather than zero, and the per-reason keys stay
+    present so a consumer reading by_reason["ipv6"] gets None instead of a
+    KeyError or a fabricated 0.
+    """
+    from data import packet_features as pf
+
+    if drops is None:
+        return {"known": False, "total": None, "fraction": None,
+                "by_reason": dict.fromkeys(pf.DROP_REASONS, None)}
+    by_reason = dict.fromkeys(pf.DROP_REASONS, 0)
+    by_reason.update({k: int(v) for k, v in drops.items()})
+    total = int(sum(by_reason.values()))
+    seen = n_parsed + total
+    return {
+        "known": True,
+        "total": total,
+        "fraction": (total / seen) if seen else 0.0,
+        "by_reason": by_reason,
+    }
+
+
 def _windows_from_input(cfg, input_path, anonymizer):
-    """(flows, window_features). PCAP -> full extractor (all 30 features);
-    CSV -> flow-derived features (packet-stats absent, decision 001)."""
+    """(flows, window_features, unparsed_frames). PCAP -> full extractor (all 30
+    features); CSV -> flow-derived features (packet-stats absent, decision 001).
+    A CSV carries no frames, so its coverage counters are all zero."""
     from data import flow_features as FF
+    from data import packet_features as pf
     from data import windows as W
 
     if _is_pcap(input_path):
-        from data import packet_features as pf
-
         packets = pf.extract_packet_table(input_path, cfg)
+        unparsed = _coverage(len(packets), pf.dropped_frames(packets))
         pkt_win = pf.packet_window_features(packets, cfg)
         pkt_win, _ = pf.apply_retransmission_backend(pkt_win, input_path, cfg)
         pkt_win = pkt_win.merge(pf.sent_window_features(packets, cfg),
@@ -103,16 +165,18 @@ def _windows_from_input(cfg, input_path, anonymizer):
         # windows.py's per-parquet loader expects files on disk; build the
         # feature frame directly from the in-memory packet-window table.
         wf = W.window_features_from_packet_windows(cfg, pkt_win, anonymizer=anonymizer)
-        return flows, wf
+        return flows, wf, unparsed
 
     flows = FF.load_canonical(cfg, input_path)
     wf = W.window_features_from_flows(cfg, flows, anonymizer=anonymizer)
-    return flows, wf
+    return flows, wf, _coverage(0, dict.fromkeys(pf.DROP_REASONS, 0))
 
 
 def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None) -> dict:
-    """Run the offline engine on one file. Writes out_dir/audit_chain.jsonl and
-    a forecasts.json; returns {n_flows, forecasts, n_alerts, ...}.
+    """Run the offline engine on one file. Writes out_dir/audit_chain.jsonl,
+    forecasts.json (the forecast array) and run_summary.json (the run-level
+    facts, including what could not be parsed); returns the same summary with
+    the forecasts and the host graph attached.
 
     exclude_host: what-if ablation (M10.4). When set, that host's own
     (source, window) rows and every flow it participated in are dropped from the
@@ -151,7 +215,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
             "an intentional retrain."
         )
 
-    flows, wf = _windows_from_input(cfg, csv_path, anonymizer)
+    flows, wf, unparsed = _windows_from_input(cfg, csv_path, anonymizer)
     if exclude_host is not None:
         exclude_host = str(exclude_host)
         wf = wf[wf["host"].astype(str) != exclude_host].reset_index(drop=True)
@@ -170,7 +234,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
 
     explainer = EX.ShapExplainer(booster, feat_cols)
     window_sec = cfg["windows"]["window_seconds"]
-    stages = cfg["stages"]
+    stage_rules = cfg["stage_rules"]
 
     # A run analyses ONE file -> a fresh chain. (A long-lived deployment would
     # append across batches; the file-analysis engine starts clean so re-running
@@ -201,7 +265,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
         feats = {c: float(wf.iloc[row][c]) for c in feat_cols}
         # stage: the engine model is binary attack/benign; stage is inferred
         # from the observed pattern via the technique rules' parent stage guess.
-        stage = _infer_stage(feats, stages)
+        stage = _infer_stage(feats, stage_rules)
         tech = EX.map_technique(stage, feats)
         top_windows = _top_contributing_windows(host_hist[host], ws, max_ctx)
         obj = {
@@ -222,15 +286,52 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
                        "stage": stage, "technique": tech["technique"]})
     ledger.checkpoint()
 
-    (out_dir / "forecasts.json").write_text(json.dumps(forecasts, indent=2), encoding="utf-8")
-    return {
+    graph = _build_graph(flows, wf, forecasts)
+    summary = {
         "n_flows": int(len(flows)),
         "n_host_windows": int(len(wf)),
         "n_alerts": int(len(alert_rows)),
-        "forecasts": forecasts,
         "threshold": threshold,
-        "graph": _build_graph(flows, wf, forecasts),
+        "unparsed_frames": unparsed,
+        "hosts_pseudonymised": _hosts_pseudonymised(
+            [f["host"] for f in forecasts] + [n["ip"] for n in graph["nodes"]]
+        ),
+        "forecasts_file": FORECASTS_FILE,
     }
+    (out_dir / FORECASTS_FILE).write_text(json.dumps(forecasts, indent=2), encoding="utf-8")
+    _write_run_summary(out_dir, summary)
+    return {**summary, "forecasts": forecasts, "graph": graph}
+
+
+def _write_run_summary(out_dir, summary: dict) -> Path:
+    """Persist the run-level facts beside forecasts.json (RUN_SUMMARY_FILE).
+
+    Written for every run, including one with zero alerts — that is the case it
+    exists for: an IPv6-only capture and a genuinely quiet network both produce
+    an empty forecasts.json, and only `unparsed_frames` tells them apart.
+    """
+    path = Path(out_dir) / RUN_SUMMARY_FILE
+    path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return path
+
+
+def _hosts_pseudonymised(hosts) -> bool:
+    """Measured off every address this run emits — forecast hosts and graph nodes
+    alike — never declared: True only when not one of them is a literal address,
+    because one readable address is enough to make the claim false. Nothing
+    emitted means nothing was pseudonymised (False); an empty run is not a
+    privacy guarantee."""
+    import ipaddress
+
+    emitted = False
+    for host in hosts:
+        emitted = True
+        try:
+            ipaddress.ip_address(str(host))
+        except ValueError:
+            continue
+        return False
+    return emitted
 
 
 def _build_graph(flows, wf, forecasts) -> dict:
@@ -287,27 +388,37 @@ def _top_contributing_windows(history, alert_ws: float, context_seconds: float, 
     ]
 
 
-def _infer_stage(feats: dict, stages: list[str]) -> str:
+def _infer_stage(feats: dict, rules: dict) -> str:
     """Coarse stage from the named-feature pattern within a 15 s WINDOW (the
     engine model is binary; stage granularity comes from interpretable rules).
-    Thresholds are windowed, not per-flow. The heuristic is deliberately simple
-    and its limits are documented in docs/limitations.md."""
+
+    `rules` is configs/data.yaml `stage_rules`; the thresholds are windowed, not
+    per-flow, and are unmeasured — stage accuracy is TBD. A window that matches
+    nothing returns UNCLASSIFIED_STAGE: pacing an attack lowers every per-window
+    count, and the honest answer there is "no rule fired", not a stage guess.
+    That evasion is measured, not hypothetical — it is pinned by
+    tests/test_engine.py::test_paced_randomised_scan_evades_the_stage_rules and
+    noted above `stage_rules` in configs/data.yaml.
+    """
     syn = feats.get("syn", 0)
     distinct_ports = feats.get("distinct_dst_ports", 0)
     distinct_ips = feats.get("distinct_dst_ips", 0)
     # bulk outbound to a single peer, few SYNs (an established transfer, not a scan)
-    if feats.get("sent_bytes", 0) > 50_000 and distinct_ips <= 2 and syn < 10:
+    if (feats.get("sent_bytes", 0) > rules["exfiltration_sent_bytes_gt"]
+            and distinct_ips <= rules["exfiltration_distinct_dst_ips_lte"]
+            and syn < rules["exfiltration_syn_lt"]):
         return "exfiltration"
     # a sweep: many ports OR a strongly sequential scan signature
-    if distinct_ports > 20 or feats.get("sequential_port_ratio", 0) > 0.5:
+    if (distinct_ports > rules["scan_distinct_dst_ports_gt"]
+            or feats.get("sequential_port_ratio", 0) > rules["scan_sequential_port_ratio_gt"]):
         # a scan sourced from an internal host toward another internal host reads
         # as lateral movement; from outside as reconnaissance
         return "lateral_movement" if feats.get("internal", 0) == 1 else "recon"
-    if syn > 30 and feats.get("ack", 0) < syn:
+    if syn > rules["initial_access_syn_gt"] and feats.get("ack", 0) < syn:
         return "initial_access"
-    if feats.get("sent_pkts", 0) > 500:
+    if feats.get("sent_pkts", 0) > rules["impact_sent_pkts_gt"]:
         return "impact"
-    return "c2"
+    return UNCLASSIFIED_STAGE
 
 
 def _validate(obj: dict) -> None:

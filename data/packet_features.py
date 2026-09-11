@@ -28,9 +28,18 @@ import numpy as np
 import pandas as pd
 
 _ETH_IPV4 = 0x0800
+_ETH_IPV6 = 0x86DD
 _ETH_VLAN = 0x8100
 _PROTO_TCP = 6
 _PROTO_UDP = 17
+
+# Frames the IPv4 fast path cannot turn into a row. A security tool that drops
+# traffic silently reports "no threat" for what it never saw, so every skipped
+# frame lands in one of these counters instead of vanishing. IPv6 has its own
+# counter because it is the live gap: the parser is IPv4-only, so an IPv6-only
+# capture yields zero rows and must say so.
+DROP_REASONS = ("short_frame", "ipv6", "non_ipv4_ethertype", "truncated_ip_header")
+DROPPED_FRAMES_ATTR = "dropped_frames"
 
 # Column -> array.array typecode. IPs travel as uint32 through the whole
 # pipeline (object strings for 4.7M packets alone cost gigabytes); they become
@@ -91,12 +100,34 @@ def _packet_time(reader, meta) -> float:
     return ts / meta.tsresol
 
 
+def dropped_frames(packets: pd.DataFrame) -> dict[str, int] | None:
+    """Per-reason counts of the frames extract_packet_table could not parse, or
+    None when this table carries no drop history at all.
+
+    Rides on the returned table's `.attrs` so the return type stays a plain
+    DataFrame for existing callers — but pandas only propagates `.attrs` when
+    every input carries the same ones, so merging or concatenating this table
+    with any frame that has none (and groupby().size(), and rebuilding a frame
+    from its columns) strips the history. That case returns None, never an
+    empty dict: "nothing was
+    dropped" and "I do not know what was dropped" must not look alike, or an
+    unknown drop history is reported as a clean capture — the silent failure this
+    counter exists to remove. A table straight from extract_packet_table always
+    carries every DROP_REASONS key, zero included.
+    """
+    drops = packets.attrs.get(DROPPED_FRAMES_ATTR)
+    return None if drops is None else dict(drops)
+
+
 def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
     """Stream one pcap into the compact per-packet table (pass 1).
 
     Accumulates into typed array buffers (~40 bytes/packet total) — a
     list-of-tuples design peaked at ~4 GB RSS on a 4.7M-packet member and
     would crash on DoS-day captures (M2.1 bound: 1 GB pcap under 4 GB RSS).
+
+    Only IPv4 (bare or single-VLAN-tagged) becomes rows; every other frame is
+    counted by reason and readable via dropped_frames(table).
     """
     import array
 
@@ -106,18 +137,24 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
 
     tracker = _RetransTracker(cfg["packet_features"]["retrans_track_per_flow"])
     cols = {name: array.array(code) for name, code in _PACKET_LAYOUT.items()}
+    dropped = dict.fromkeys(DROP_REASONS, 0)
 
     reader = _open_raw_reader(pcap_path)
     try:
         for raw, meta in reader:
-            if len(raw) < 34:
+            if len(raw) < 34:  # shorter than Ethernet + the smallest IPv4 header
+                dropped["short_frame"] += 1
                 continue
             ethertype = struct.unpack_from("!H", raw, 12)[0]
             offset = 14
             if ethertype == _ETH_VLAN:
                 ethertype = struct.unpack_from("!H", raw, 16)[0]
                 offset = 18
-            if ethertype != _ETH_IPV4 or len(raw) < offset + 20:
+            if ethertype != _ETH_IPV4:
+                dropped["ipv6" if ethertype == _ETH_IPV6 else "non_ipv4_ethertype"] += 1
+                continue
+            if len(raw) < offset + 20:
+                dropped["truncated_ip_header"] += 1
                 continue
 
             ihl = (raw[offset] & 0x0F) * 4
@@ -193,6 +230,7 @@ def extract_packet_table(pcap_path: str | Path, cfg: dict) -> pd.DataFrame:
     )
     if not df["ts"].is_monotonic_increasing:  # captures are time-ordered already
         df = df.sort_values("ts", kind="stable").reset_index(drop=True)
+    df.attrs[DROPPED_FRAMES_ATTR] = dropped
     return df
 
 

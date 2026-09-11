@@ -67,6 +67,30 @@ stages:
   - exfiltration
   - impact
 
+# Thresholds for engine/predict.py:_infer_stage. The deployed engine model is
+# binary attack/benign; stage granularity comes from these interpretable rules,
+# so they are calibration constants that live here and never in the module.
+# Every value is per 15 s WINDOW, and none of them is measured yet: stage
+# accuracy is TBD until a labelled stage evaluation lands.
+# KNOWN WEAKNESS (test_engine.py::test_paced_randomised_scan_evades_the_stage_rules):
+# a fixed per-window threshold falls with the attacker's pacing, so a 15x slower
+# port-randomised sweep drops under every rule below. It then reports
+# `unclassified` — no rule matched — rather than a confident wrong stage.
+# Each key names its own comparison against the feature: `_gt` is `feature >
+# value`, `_lte` is `feature <= value`, `_lt` is `feature < value`. A bare `_max`
+# hid that difference and mis-stated the real maximum by one.
+# engine/technique_map.yaml reads the shared thresholds from here by name
+# (`stage_rule:<key>`) instead of repeating the literals, so recalibrating a
+# value here cannot leave the stage and its technique contradicting each other.
+stage_rules:
+  exfiltration_sent_bytes_gt: 50000      # bulk outbound in one window
+  exfiltration_distinct_dst_ips_lte: 2   # to a single peer, not a sweep
+  exfiltration_syn_lt: 10                # an established transfer opens few connections
+  scan_distinct_dst_ports_gt: 20
+  scan_sequential_port_ratio_gt: 0.5     # sequential vs randomised port order
+  initial_access_syn_gt: 30              # many SYNs, unmatched by ACKs
+  impact_sent_pkts_gt: 500
+
 # Unit of prediction is (source_host, window); the network-level score is the max
 # over host scores in the window.
 prediction_unit: source_host_window
