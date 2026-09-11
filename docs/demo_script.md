@@ -19,15 +19,30 @@ Disconnect Wi-Fi / unplug Ethernet **before** starting the recording, and say so
 > "This forecasts network attacks *before* they finish. Not a flow classifier — the metric that
 > matters is lead time. And it runs with the network physically disconnected."
 
-Show `pytest tests/ -q` finishing: **93 passed, 1 skipped** (the skip is the
-env-gated tshark cross-check), then `python -m tests.smoke` →
-`1000 flows -> forecasts, ledger_verified=True, ~9s`. Both run with sockets blocked.
+Show `pytest tests/ -q` finishing and **read the pass/skip line off the screen** — do not
+rehearse a number, the count moves with the suite and with what is bootstrapped on the
+recording machine (skips are gated on the trained artifacts, the dataset and tshark). Then
+`python -m tests.smoke`, which prints one line in exactly this form — read the numbers off
+the screen, do not rehearse them:
+
+```
+smoke: <n> flows -> <k> forecasts, ledger_verified=True, <elapsed>s
+```
+
+Both run with sockets blocked.
 
 ### 0:15–0:35 — Input and forecast timeline
 
-Click **Use the bundled sample** (or upload a PCAP for full features — the app warns honestly
-when a CSV lacks packet-level data). Point at the four metrics: flows, host-windows, alerts, and
-the **threshold fitted from a 1 % false-positive budget**, not hardcoded.
+Click **Demo: synthetic PCAP (full features)** — the bundled capture, which exercises the full
+30-feature packet path. (**Demo: sample CSV (flow only)** is the flow-only path; the app warns
+honestly when a CSV lacks packet-level data.) Point at the four metrics: flows, host-windows,
+alerts, and the **threshold fitted from a 1 % false-positive budget**, not hardcoded.
+
+What a correct run looks like — hosts, stages and the operator log they should match — is in
+`app/assets/expected_output.md`. Check the render against it before recording.
+
+If the capture contains frames the IPv4 packet path cannot read, a banner under the metrics
+says how many and why. A capture the parser never saw must not render as "0 alerts, all clear".
 
 Then the timeline: probability per window, the red threshold line, stage-coloured points.
 
@@ -36,7 +51,9 @@ Then the timeline: probability per window, the red threshold line, stage-coloure
 
 ### 0:35–1:00 — Why this host (the explainability beat)
 
-Pick the top host in the triage table. Show the explanation panel.
+Pick the top host in the triage table. Show the explanation panel. The picker is labelled
+**Host (real address — only the ledger stores keyed pseudonyms)**: the forecasts carry the
+address an analyst has to act on, and the pseudonymisation happens in the ledger, not here.
 
 > "Every alert is explained in **named features** — payload-size distribution, packet counts,
 > distinct destinations — never embedding dimensions. Black-box output is not acceptable for
@@ -45,6 +62,10 @@ Pick the top host in the triage table. Show the explanation panel.
 
 Point at the **top contributing windows** (when the attack was forming, seconds before the
 alert), the MITRE technique, and the flagged-flows table underneath.
+
+If a judge asks why a byte count reads negative: the `value (z-score)` column is the feature
+standardised against the training mean and σ — the scale TreeSHAP attributes over. Say so; the
+column is labelled for it and the panel carries the caveat. The *names* are real features.
 
 ### 1:00–1:20 — Forecasting ahead (the headline)
 
@@ -69,8 +90,9 @@ record index.
 
 > "Every forecast is hash-chained and Merkle-committed. Edit one record and the verifier names
 > it. Rewrite the whole chain to be self-consistent and it still fails, because the head no
-> longer matches the anchored checkpoint. No raw IP is ever stored — only keyed pseudonyms —
-> and the engine refuses to write at all if the model weights' SHA-256 doesn't match."
+> longer matches the anchored checkpoint. No raw IP ever enters the ledger — `append`
+> replaces the host with a keyed-HMAC pseudonym — and the engine refuses to write at all if
+> the model weights' SHA-256 doesn't match."
 
 Cut to a terminal: `python -m ledger.verify_cli run/audit_chain.jsonl` — a judge can verify
 independently, offline.
