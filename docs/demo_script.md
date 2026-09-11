@@ -97,6 +97,19 @@ record index.
 Cut to a terminal: `python -m ledger.verify_cli run/audit_chain.jsonl` — a judge can verify
 independently, offline.
 
+**Before filming, and before any judged run: publish the anchor.**
+
+```
+python scripts/anchor_checkpoint.py run/audit_chain.jsonl
+```
+
+It prints a `SIH26-ANCHOR` line and a six-group spoken digest. Read the digest aloud on camera,
+or write the anchor line somewhere outside the run directory. This is not ceremony: truncating
+the chain **and** its checkpoint log together leaves two files that agree with each other, and
+nothing inside them records that the run continued — so that one attack is closed only by an
+anchor published outside them. Saying so on camera is stronger than claiming a completeness the
+ledger does not have.
+
 ### 1:45–2:00 — Honesty close
 
 > "One thing we won't hide: the recurrent world model we planned **failed its own acceptance

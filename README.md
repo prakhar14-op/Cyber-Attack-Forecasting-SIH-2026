@@ -46,6 +46,12 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 
 ## Read this first
 
+**Evaluating rather than building?** [JUDGES.md](JUDGES.md) is a ten-minute verification guide:
+what you can check on a bare clone with no dataset and no weights (the test suite, the
+documentation ratchet, the threat model's executable figures, and the audit ledger attacked four
+ways), what needs the bootstrap, and — in its own section — what we cannot currently let you
+verify and why.
+
 - [docs/limitations.md](docs/limitations.md) — what this system cannot do, stated plainly
 - [docs/architecture.md](docs/architecture.md) — 2-page design
 - [docs/benchmark_protocol.md](docs/benchmark_protocol.md) — how every number is produced

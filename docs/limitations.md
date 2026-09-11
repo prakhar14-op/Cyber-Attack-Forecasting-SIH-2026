@@ -165,5 +165,6 @@ does not make it see. Closing the gap means an IPv6 parse path, not a better cou
   published (they are outside it), anything at all if nobody published a line or nobody kept it,
   and it is not checked by any code — `verify_cli` prints the anchored count and tells the reader
   to compare it, but nothing in this repository takes an anchor line as input. The comparison is a
-  human step, and as of this writing it is named in `docs/slides.md` but **not** written into
-  `docs/demo_script.md`'s run sheet, so on the day it depends on the presenter remembering it.
+  human step: `docs/slides.md` names it and `docs/demo_script.md`'s run sheet now carries it as
+  an explicit pre-filming action, but nothing enforces it, so on the day it still depends on the
+  presenter actually doing it.
