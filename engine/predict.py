@@ -325,6 +325,7 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
         "hosts_pseudonymised": _hosts_pseudonymised(
             [f["host"] for f in forecasts] + [n["ip"] for n in graph["nodes"]]
         ),
+        "role_features_degraded": role_features_degraded(anonymizer),
         "forecasts_file": FORECASTS_FILE,
     }
     (out_dir / FORECASTS_FILE).write_text(json.dumps(forecasts, indent=2), encoding="utf-8")
@@ -454,6 +455,20 @@ def _validate(obj: dict) -> None:
     import jsonschema
 
     jsonschema.validate(obj, OUTPUT_SCHEMA)
+
+
+def role_features_degraded(anonymizer) -> bool:
+    """True when this run had no anonymisation key, so the role features are zeros.
+
+    Not a style note. `data/windows.py:_ROLE_FEATURES` is ("internal", "net24_bucket"),
+    both of which land in the deployed model's top-10 TreeSHAP attributions, and
+    `_infer_stage`'s lateral_movement branch is reachable only when `internal == 1`.
+    With no key both are 0 for every host, so the model scores a feature vector it
+    was never trained on and lateral_movement becomes unreachable. The run still
+    completes — that is deliberate, a judge without our key can still see the
+    pipeline work — but it must never do so silently.
+    """
+    return anonymizer is None
 
 
 def _maybe_anonymizer(cfg):

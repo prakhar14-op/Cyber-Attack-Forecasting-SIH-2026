@@ -1,12 +1,23 @@
-# Network Attack Forecasting — a world model for network telemetry
+# Network Attack Forecasting from Network Traffic Data
 
 **SIH 2026 · Problem SIH26153 (NTRO) · Blockchain & Cybersecurity**
 
 Given network traffic windows up to time *t*, this system scores the infiltration
 probability and MITRE ATT&CK stage per (host, window), explains every alert in terms of
 named flags, ports and flow statistics, and writes it to a tamper-evident,
-offline-verifiable ledger. A k-step head additionally ranks risk at *t+1 … t+8* windows
-(up to 40 s ahead).
+offline-verifiable ledger. A k-step engine additionally scores each host at *t+1 … t+8*
+windows (up to 40 s ahead) — as a ranking signal, with no validated operating point.
+
+> **What kind of "world model" this is, precisely.** The problem statement asks for a model that
+> learns state-transition dynamics, and lists LSTMs, Transformers, GNNs *or* latent state models
+> as acceptable. What ships here is network state as a **temporal host graph** (TGN memory) read
+> by a **causal Transformer**, with **horizon-shifted heads** that predict the label *k* windows
+> ahead. What does **not** ship is the latent state-space model we planned: the RSSM that would
+> have learned `P(S_t+1 | S_t)` explicitly **failed its own acceptance gate** — posterior
+> collapse, 0 of 2 episodes — and is published as a negative result with its recipe
+> ([decision 004](docs/decisions/004-m7-hard-gate.md), [docs/limitations.md](docs/limitations.md)
+> §4). Earlier revisions of this page called the project "a world model for network telemetry"
+> without that distinction; it is drawn here instead of assumed.
 
 It is judged as an **early-warning system, not a flow classifier**: the metric that defines
 success is **lead time** — seconds between the first alert on the attacking host and the

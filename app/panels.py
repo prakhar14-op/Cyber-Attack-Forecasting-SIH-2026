@@ -655,6 +655,34 @@ def _reason_breakdown(by_reason) -> str:
     return ", ".join(parts) or "reason not reported"
 
 
+ROLE_FEATURES_DEGRADED_TEXT = (
+    "**This run had no anonymisation key, so two of the model's features are zeros.** "
+    "`internal` and `net24_bucket` are derived from the host address via `SIH26_HMAC_KEY` "
+    "(see `.env.example`); with no key they are 0 for every host. Both sit in the deployed "
+    "model's top-10 attributions, and the `lateral_movement` stage is unreachable without "
+    "`internal`, so scores and stages on this page are **not comparable** with the published "
+    "numbers, which were measured under the standardised key. The pipeline still runs — that is "
+    "the point of letting it — but read this page as a demonstration, not as a measurement."
+)
+
+
+def role_features_degraded_note(result: dict) -> dict | None:
+    """`{severity, text}` when the run had no anonymisation key, else None.
+
+    The engine deliberately keeps running without `SIH26_HMAC_KEY` so a judge who
+    does not have our key can still watch the pipeline work end to end. The danger
+    is that the degradation is invisible: the two role features silently become 0
+    and the page looks like any other run. This is the same rule the frame-coverage
+    note enforces — a run that saw less than it appears to must say so.
+
+    Defensive like `coverage_note`, and exempt from the app's try/except wrapping
+    for the same reason: it reads the result dict and nothing else.
+    """
+    if result.get("role_features_degraded") is not True:
+        return None
+    return {"severity": "warning", "text": ROLE_FEATURES_DEGRADED_TEXT}
+
+
 def coverage_note(result: dict) -> dict | None:
     """`{severity, text}` for frames the parser could not read, or None.
 

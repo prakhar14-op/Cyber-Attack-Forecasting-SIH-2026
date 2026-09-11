@@ -326,6 +326,13 @@ if _coverage:
     else:
         st.caption(_coverage["text"])
 
+# Same rule, the other way a run can quietly see less than it appears to: with no
+# anonymisation key the two role features are zeros, which moves every score away
+# from the published ones.
+_role = panels.role_features_degraded_note(result)
+if _role:
+    st.warning(_role["text"], icon="🔑")
+
 # ---------------------------------------------------------------- timeline
 st.header("2 · Forecast timeline")
 # `ranking` is built here and consumed by sections 3 AND 4, so one failure in

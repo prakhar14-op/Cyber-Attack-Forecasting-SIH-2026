@@ -252,6 +252,7 @@ UNGUARDED_PANEL_CALLS = {
     "max_upload_mb": "same file, same reason",
     "rgba": "pure colour arithmetic over theme_colors() output",
     "coverage_note": "pure reader of the result dict the pipeline already returned",
+    "role_features_degraded_note": "same — one boolean out of the result dict",
     "host_selector_label": "same",
     "ledger_failure_text": "same, over ledger_status() output",
 }
@@ -1700,3 +1701,33 @@ def test_the_repaired_benchmark_caption_is_on_the_page_a_judge_sees(
                 f"a rendered element re-states a retired claim [{claim.slug}]: "
                 f"{text!r}\n\nWHY IT IS BANNED: {claim.why}"
             )
+
+
+def test_a_run_without_an_anonymisation_key_says_so():
+    """No key means `internal` and `net24_bucket` are 0 for every host, which moves
+    every score away from the published ones. A run that degraded must say it did;
+    a run that did not must stay quiet, or the warning becomes noise people learn
+    to ignore."""
+    degraded = panels.role_features_degraded_note({"role_features_degraded": True})
+    assert degraded is not None, "a keyless run must be disclosed on the page"
+    assert degraded["severity"] == "warning"
+    for token in ("internal", "net24_bucket", "SIH26_HMAC_KEY", "not comparable"):
+        assert token in degraded["text"], (
+            f"the disclosure must name {token!r} — a vague warning does not let a "
+            "reader work out what is wrong with the numbers in front of them"
+        )
+
+    for quiet in ({"role_features_degraded": False}, {}, {"role_features_degraded": None}):
+        assert panels.role_features_degraded_note(quiet) is None, (
+            f"{quiet!r} is not a degraded run and must not raise the warning"
+        )
+
+
+def test_the_engine_reports_whether_role_features_were_degraded():
+    """The page can only disclose what the engine measures. Pin the producer too,
+    so the note cannot become permanently silent by the key simply never being set
+    in the result dict."""
+    from engine import predict as P
+
+    assert P.role_features_degraded(None) is True, "no anonymiser means degraded"
+    assert P.role_features_degraded(object()) is False, "an anonymiser means not degraded"
