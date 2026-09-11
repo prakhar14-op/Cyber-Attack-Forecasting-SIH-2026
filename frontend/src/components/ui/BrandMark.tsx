@@ -15,11 +15,10 @@ export function BrandMark({ compact = false }: BrandMarkProps) {
           height: 36,
           flex: '0 0 auto',
           placeItems: 'center',
-          border: '1px solid rgba(56, 189, 248, 0.25)',
+          border: '1px solid var(--border-medium)',
           borderRadius: 11,
-          background: 'linear-gradient(145deg, rgba(56,189,248,.14), rgba(37,99,235,.06))',
-          boxShadow: '0 0 24px rgba(56,189,248,.08)',
-          color: 'var(--accent-bright)',
+          background: 'var(--accent)',
+          color: '#fff',
         }}
       >
         <ShieldCheck size={18} strokeWidth={1.8} />

@@ -39,7 +39,7 @@ export const navigationGroups: NavigationGroup[] = [
   {
     label: 'Investigation',
     items: [
-      { label: 'Incident Workspace', shortLabel: 'Incident', path: '/incident/host-preview', icon: FileSearch, accent: '#f59e0b' },
+      { label: 'Incident Workspace', shortLabel: 'Incident', path: '/incident', icon: FileSearch, accent: '#f59e0b' },
       { label: 'Explainability', shortLabel: 'Explain', path: '/explain', icon: Binary, accent: '#a78bfa' },
       { label: 'Audit Ledger', shortLabel: 'Ledger', path: '/ledger', icon: ScrollText, accent: '#34d399' },
       { label: 'Benchmark', shortLabel: 'Benchmark', path: '/benchmark', icon: ChartNoAxesCombined, accent: '#94a3b8' },

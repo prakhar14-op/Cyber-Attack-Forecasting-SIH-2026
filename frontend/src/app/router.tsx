@@ -28,6 +28,7 @@ export const router = createBrowserRouter([
       { path: '/graph', element: <RouteBoundary><GraphPage /></RouteBoundary> },
       { path: '/forecast', element: <RouteBoundary><ForecastPage /></RouteBoundary> },
       { path: '/timeline', element: <RouteBoundary><TimelinePage /></RouteBoundary> },
+      { path: '/incident', element: <RouteBoundary><IncidentPage /></RouteBoundary> },
       { path: '/incident/:host', element: <RouteBoundary><IncidentPage /></RouteBoundary> },
       { path: '/explain', element: <RouteBoundary><ExplainPage /></RouteBoundary> },
       { path: '/ledger', element: <RouteBoundary><LedgerPage /></RouteBoundary> },

@@ -45,5 +45,15 @@ run/
 # Diagnostic data caches (regenerable; the committed evidence is the .png/.json)
 diagnostics/*.npz
 
+# Frontend: dependencies and build output are regenerable from package-lock.json.
+# NOTE: frontend/node_modules and frontend/dist are currently TRACKED from an
+# earlier commit. These rules stop NEW files being added; to stop tracking the
+# existing ones run (this removes them from the index only, not from disk):
+#   git rm -r --cached frontend/node_modules frontend/dist
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+
 .DS_Store
 ._*
