@@ -8,7 +8,15 @@ from a CDN at view time. All logic lives in app/panels.py so it is testable
 without a browser.
 
 Panels: upload -> forecast timeline (M10.2) -> explanation (M10.3) -> what-if
-(M10.4) -> ledger verify/tamper/re-verify (M10.5) -> results card (M10.6).
+(M10.4) -> ledger verify/tamper/re-verify (M10.5) -> results card (M10.6) ->
+network graph (M10.8) -> k-step risk curve (PS deliverable 3).
+
+The k-step panel is deliberately the one panel that leads with its own
+limitation: the head behind it has a ranking signal and no validated operating
+point at any horizon, and a rising curve read as a prediction would be exactly
+the overclaim this repo has spent three rounds removing. The caveat is rendered
+before the chart and drawn INTO the chart, and its figures are pinned against
+docs/limitations.md from tests/test_app.py.
 
 Every failure-prone call into panels is wrapped and routed through
 panels.failure_card: a raw Streamlit traceback on a projector leaks the
@@ -30,6 +38,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
 import streamlit as st
 
 from app import panels
@@ -127,6 +136,81 @@ def _network_figure(layout: dict):
             xaxis=axis, yaxis=axis, zaxis=axis,
             bgcolor="rgba(0,0,0,0)", aspectmode="cube",
             camera=dict(eye=dict(x=1.0, y=1.0, z=0.85))))
+    return fig
+
+
+def _kstep_figure(curve, host: str, log_scale: bool):
+    """The per-host k-step risk curve (PS deliverable 3), rendered server-side.
+
+    Matplotlib like the section-2 timeline, so the page stays offline, and the
+    same theme palette, so it is legible on the light theme a projector defaults
+    to.
+
+    Two constraints shape it. Each horizon's threshold is drawn as its OWN
+    marker rather than one line across the chart, because they are separate
+    operating points and a single line would imply one shared decision rule. And
+    FORECAST_FIGURE_CAVEAT is drawn inside the axes: a screenshot of this chart
+    travels without the warning rendered above it, and a risk curve that arrives
+    somewhere else with no caveat attached is the overclaim in its most portable
+    form.
+
+    `log_scale` is decided by panels.kstep_use_log_scale and passed in rather
+    than queried here: every panels call this module makes has to sit inside the
+    section's try (tests/test_app.py walks the AST for that), and a figure
+    builder is not inside one.
+    """
+    fig, ax = plt.subplots(figsize=(11, 3.6), facecolor=COLORS["background"])
+    ax.set_facecolor(COLORS["background"])
+
+    seconds = [float(s) for s in curve["seconds_ahead"]]
+    scores = [float(p) for p in curve["probability"]]
+    ax.plot(seconds, scores, "-o", ms=5, color=COLORS["accent"],
+            label=f"`{host}` k-step ranking score")
+
+    # Thresholds are per-horizon and may be absent for some k; only the ones the
+    # engine actually supplied are drawn.
+    th = [(s, float(t)) for s, t in zip(seconds, curve["threshold"]) if pd.notna(t)]
+    if th:
+        ax.plot([s for s, _ in th], [t for _, t in th], "--s", ms=5,
+                color=COLORS["alert"], label="that horizon's own 1% FPR threshold")
+
+    crossings = [(s, p) for s, p, a in zip(seconds, scores, curve["alert"]) if bool(a)]
+    if crossings:
+        ax.scatter([s for s, _ in crossings], [p for _, p in crossings], s=110,
+                   facecolors="none", edgecolors=COLORS["alert"], linewidths=1.6,
+                   label="crosses that horizon's threshold (not a validated alert)")
+
+    # The stage behind the curve, annotated only where it CHANGES. engine.forecast
+    # derives it from the SOURCE window, so on today's engine it is one label for
+    # the whole curve and exactly one annotation appears — which is the honest
+    # picture. The loop still handles a change so the chart would show one if a
+    # future engine ever produced a per-k stage; it does not imply one exists.
+    previous = None
+    for s, p, stage in zip(seconds, scores, curve["stage"]):
+        if stage and stage != previous:
+            # Offset right, not centred: the first annotated point is usually the
+            # leftmost one, and a centred label there is clipped by the y-axis.
+            ax.annotate(f"source-window stage: {stage}", (s, p),
+                        textcoords="offset points", xytext=(8, 10),
+                        ha="left", fontsize=8, color=COLORS["text"])
+        previous = stage
+
+    if log_scale:
+        ax.set_yscale("log")
+        ax.set_ylabel("k-step ranking score (log)", color=COLORS["text"])
+    else:
+        ax.set_ylabel("k-step ranking score", color=COLORS["text"])
+    ax.set_xlabel("seconds ahead of this host's newest window (k × stride)",
+                  color=COLORS["text"])
+    ax.set_title(panels.FORECAST_FIGURE_CAVEAT, loc="left", fontsize=8,
+                 color=COLORS["alert"])
+    ax.tick_params(colors=COLORS["text"])
+    for spine in ax.spines.values():
+        spine.set_color(COLORS["muted"])
+    legend = ax.legend(fontsize=7, ncol=3, facecolor=COLORS["panel"],
+                       edgecolor=COLORS["muted"], labelcolor=COLORS["text"])
+    legend.get_frame().set_alpha(0.9)
+    ax.grid(alpha=0.3, color=COLORS["muted"])
     return fig
 
 
@@ -404,9 +488,7 @@ else:
         st.markdown("**Model comparison (test split, 1% FPR budget)**")
         st.dataframe(card, width="stretch")
     st.caption(
-        "Regenerate: `python scripts/make_ablation_table.py`. Live scoring in this app uses the "
-        "deployed fast tier (XGBoost); the **fused** row is the eval-side headline model. The "
-        "RSSM world model failed its lead-time gate and is not shipped — see docs/decisions/004."
+        "Regenerate: `python scripts/make_ablation_table.py`. " + panels.DEPLOYED_MODEL_NOTE
     )
 
 # ---------------------------------------------------------------- network graph
@@ -470,5 +552,81 @@ else:
                 )
         else:
             st.info("The contained network has no remaining host graph.")
+    except Exception as exc:
+        _error_card(exc)
+
+# ------------------------------------------------------------ k-step forecast
+# PS deliverable 3, the "what next" half. Sections 2-4 answer "is this host under
+# attack now"; this one answers "what does this host look like over the next k
+# windows". The caveat is rendered FIRST and unconditionally — before the
+# spinner, before any failure branch — because it is true on every path through
+# this section, including the ones where no curve is ever drawn.
+st.header("8 · k-step forecast — the next k windows (PS deliverable 3)")
+st.warning(panels.FORECAST_HEADER_CAVEAT, icon="🚧")
+
+# The forecaster re-runs the pipeline, so its result is cached per input exactly
+# as the nowcast is: a widget interaction must not re-run it, and must not
+# re-append to a ledger.
+_FORECAST_KEYS = ("forecast", "forecast_unavailable", "forecast_error")
+if st.session_state.get("forecast_ran_for") != str(input_path):
+    for _k in _FORECAST_KEYS:
+        st.session_state.pop(_k, None)
+    try:
+        with st.spinner("Running the k-step forecaster over the available horizons…"):
+            st.session_state.forecast = panels.run_forecast(input_path, _session_dir())
+    except panels.ForecastUnavailable as exc:
+        # Not a failure a judge can fix on this machine: the capability is absent.
+        # It gets an empty state naming what is missing, not a red error card.
+        st.session_state.forecast_unavailable = str(exc)
+    except Exception as exc:
+        # A forecaster that IS here and broke. The exception is held rather than
+        # re-raised on every rerun, so the card survives the next interaction
+        # without the expensive failing call being repeated behind it.
+        st.session_state.forecast_error = exc
+    st.session_state.forecast_ran_for = str(input_path)
+
+if st.session_state.get("forecast_unavailable"):
+    st.info(st.session_state["forecast_unavailable"], icon="🚫")
+elif st.session_state.get("forecast_error") is not None:
+    _error_card(st.session_state["forecast_error"])
+else:
+    fc = st.session_state.get("forecast") or {}
+    try:
+        empty_reason = panels.kstep_empty_reason(fc)
+        if empty_reason:
+            st.info(empty_reason, icon="📭")
+        else:
+            k_hosts = panels.kstep_hosts(fc)
+            k_pick = st.selectbox("Risk curve for host", k_hosts, key="kstep_host")
+            curve = panels.kstep_curve(fc, k_pick)
+            plottable = panels.kstep_plottable(curve)
+            if plottable.empty:
+                st.info(panels.FORECAST_NO_CURVE_TEXT, icon="📭")
+            else:
+                st.pyplot(_kstep_figure(plottable, k_pick,
+                                        panels.kstep_use_log_scale(plottable)))
+                if len(plottable) < len(curve):
+                    # Said, not smoothed over: a line drawn through a horizon the
+                    # engine returned nothing for would invent the missing point.
+                    st.caption(
+                        f"{len(curve) - len(plottable)} of {len(curve)} horizons had no "
+                        "readable score or seconds-ahead and are not on the chart; they "
+                        "are in the table below with those cells empty."
+                    )
+            st.markdown(panels.FORECAST_STAGE_TABLE_HEADING)
+            st.dataframe(panels.kstep_curve_rows(curve), width="stretch")
+            st.caption(panels.FORECAST_CURVE_CAPTION)
+            # The forecaster's own statement of what it does not establish,
+            # rendered verbatim. It travels in the engine's return value for
+            # exactly this purpose, and showing it means the page tracks the
+            # engine's finding instead of reciting a constant of its own.
+            engine_caveat = panels.kstep_engine_caveat(fc)
+            if engine_caveat:
+                st.caption(f"**engine.forecast states:** {engine_caveat}")
+
+        unavailable = panels.kstep_unavailable_rows(fc)
+        if unavailable:
+            st.markdown("**Horizons with no forecast** — stated, never dropped")
+            st.dataframe(unavailable, width="stretch")
     except Exception as exc:
         _error_card(exc)

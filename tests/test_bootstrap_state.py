@@ -7,13 +7,19 @@ engine-dependent part of the Streamlit demo surface, and the train-only-scaler
 anti-leakage check. A green summary line therefore overstates what has been
 checked, and nothing else in the suite says so.
 
-No expected pass/skip count appears here, in docs/INSTALL.md or in the CI
-comment. An earlier version of this file published "78 passed, 16 skipped" in
+Nowhere here, in docs/INSTALL.md or in the CI comment is a pass/skip count
+stated as an expectation. The one count still written down is the retracted
+figure in the next sentence, quoted so that this paragraph can name what it is
+retracting: an earlier version of this file published "78 passed, 16 skipped" in
 its own docstring; the suite outgrew it within the same session and the figure
 became a published falsehood in three places at once. The criterion for a
 correct bare checkout is `0 failed, 0 errors, some skipped` — read the counts
 off your own run. `tests/test_docs_claims.py` bans the reintroduction of a
-hardcoded count.
+hardcoded count, and since its scope is now every UTF-8-decodable file in the
+repository rather than a list of documents, that ban covers this docstring: the
+retracted figure above survives only because it is quoted verbatim in that
+guard's `allow_exact`, and a second count written anywhere in this file would
+fail the suite.
 
 This test always runs. It prints a two-part report — which bootstrap
 prerequisites are present, and which capability each one gates — so the gap
@@ -31,10 +37,20 @@ capability whose tests are only partly gated now reports PARTIAL with the
 counts, and it counts them itself.
 
 RUNS means every named test executes here; its verdict is then the suite's own
-result. PARTIAL means some execute and some are gated. SKIPPED means the
-guarantee is not checked here at all. Gating is the right shape: the artifacts
-are gitignored (CLAUDE.md forbids committing weights) and the dataset is
-~12.7 GiB, so a bare checkout skipping them is correct behaviour, not breakage.
+result. PARTIAL means some execute and some are gated. SKIPPED means every named
+test is gated, so the guarantee is not checked here. Gating is the right shape:
+the artifacts are gitignored (CLAUDE.md forbids committing weights) and the
+dataset is ~12.7 GiB, so a bare checkout skipping them is correct behaviour, not
+breakage.
+
+UNTESTED is the fourth, and it is the one that has to exist: a capability that
+names no test at all. This report used to call those RUNS the moment their
+prerequisites were present, which put "[RUNS] The published ablation table is
+regenerable" directly above the line "no automated test" on any machine holding
+results/*.json — a state whose legend promises that every named test executes,
+awarded to a claim with none. Present inputs are not a check of what is done
+with them, so a capability with no test reports UNTESTED whatever this machine
+has bootstrapped, and names the manual procedure instead.
 
 NO TEST FILE, UNIMPORTABLE and UNREADABLE are not verdicts. They mean this probe
 could not work out what happens to a node, and `test_every_named_test_node_resolves`
@@ -63,17 +79,35 @@ from tests._stubs import REPO_ROOT, engine_artifacts_present
 RUNS = "RUNS"
 PARTIAL = "PARTIAL"
 SKIPPED = "SKIPPED"
+# A capability that names no test. Distinct from SKIPPED, which means named
+# tests exist and every one of them is gated: UNTESTED means there is nothing to
+# gate. It is deliberately not reachable from a prerequisite being present,
+# because that is the over-claim it replaces.
+UNTESTED = "UNTESTED"
 UNKNOWN = "NO TEST FILE"
 BROKEN = "UNIMPORTABLE"
 # A node whose source could not be read, so whether it calls pytest.skip() in its
 # body is not known. Reported, never guessed: see _node_state.
 UNREADABLE = "UNREADABLE"
-STATES = (RUNS, PARTIAL, SKIPPED, UNKNOWN, BROKEN, UNREADABLE)
+STATES = (RUNS, PARTIAL, SKIPPED, UNTESTED, UNKNOWN, BROKEN, UNREADABLE)
 # States that mean "this report could not work out what happens here". They are
 # failures, not verdicts: test_every_named_test_node_resolves fails on any of
 # them. Ordered worst-first; classify() reports the worst one present.
 UNRESOLVED = (BROKEN, UNKNOWN, UNREADABLE)
 _WIDTH = max(len(s) for s in STATES)
+
+# state -> the one line the report prints defining it. The legend is RENDERED
+# from this table rather than written out beside it, so a state cannot reach the
+# report without a reader-facing definition, and the definition cannot drift
+# from the state it defines. test_bootstrap_state_is_disclosed asserts every
+# state the report actually uses is defined here and printed. The UNRESOLVED
+# states share a line of their own below: they are failures, not verdicts.
+LEGEND: dict[str, str] = {
+    RUNS: "every named test executes here; its verdict is this suite's own.",
+    PARTIAL: "some execute, some are gated; the gated node ids are listed.",
+    SKIPPED: "named tests exist and every one is gated. NOT checked in this checkout.",
+    UNTESTED: "no test names this claim. Its prerequisites are not a check of it.",
+}
 
 # Per-node verdicts, one level below the capability states above.
 NODE_RUNS = "runs"
@@ -98,6 +132,13 @@ class Capability:
     claim: str
     tests: tuple[str, ...]
     needs: tuple[str, ...]
+    # What a reader must do BY HAND when `tests` is empty. Required for exactly
+    # those capabilities: an unautomated claim with no stated manual procedure
+    # is a claim with nothing behind it and no way to get behind it, and
+    # test_untested_capabilities_name_the_manual_check fails on one. The
+    # procedure lives with the capability rather than in the renderer so the
+    # report cannot print one capability's instructions under another's claim.
+    manual: str = ""
 
 
 @dataclass(frozen=True)
@@ -259,6 +300,11 @@ CAPABILITIES: tuple[Capability, ...] = (
         "The published ablation table is regenerable from results/*.json",
         (),
         ("published results",),
+        manual=(
+            "run scripts/reproduce_results.ps1 (needs the dataset and "
+            "SIH26_HMAC_KEY), then diff scripts/make_ablation_table.py's output "
+            "against the table in README.md yourself"
+        ),
     ),
 )
 
@@ -275,7 +321,15 @@ ALWAYS_EXERCISED: tuple[tuple[str, str], ...] = (
      "tests/test_engine.py::test_output_schema_rejects_embedding_dimensions"),
     ("The anonymiser refuses to run without SIH26_HMAC_KEY rather than use a default",
      "tests/test_anonymize.py"),
-    ("Retired claims have not reappeared in the judge-facing docs",
+    # Was "in the judge-facing docs or in the test modules' own docstrings",
+    # which stopped being what that guard does: it scans every UTF-8-decodable
+    # file in the repository now, which is how the app source came into scope
+    # after a retired claim was found live in a Streamlit caption. A disclosure
+    # that describes a narrower guard than the one that runs is the same defect
+    # as one that describes a wider one, pointed the other way.
+    ("Retired claims have not reappeared in any prose surface of this repository "
+     "- documents, app and engine source, CI, the SVG figures and the test "
+     "modules' own docstrings alike",
      "tests/test_docs_claims.py"),
 )
 
@@ -398,8 +452,12 @@ def _executes(node: Node, needs_met: bool) -> bool:
 def classify(capability: Capability, present: dict[str, bool]) -> str:
     needs_met = all(present[n] for n in capability.needs)
     nodes = [n for spec in capability.tests for n in probe_nodes(spec)]
-    if not nodes:  # a claim with no automated test: prerequisites are all we have
-        return RUNS if needs_met else SKIPPED
+    if not nodes:
+        # No test names this claim, so `present` cannot decide anything about it
+        # and is not consulted. This branch used to return RUNS when the
+        # prerequisites were met — a state defined as "every named test executes
+        # here" awarded to a capability with no named tests at all.
+        return UNTESTED
     for state in UNRESOLVED:  # worst first
         if any(n.state == state for n in nodes):
             return state
@@ -437,23 +495,26 @@ def build_report() -> tuple[str, dict[str, str]]:
         if not p.present:
             lines.append(f"            -> {p.bootstrap}")
 
-    lines += ["", "CAPABILITIES", "",
-              "  RUNS    = every named test executes here; its verdict is this suite's own.",
-              "  PARTIAL = some execute, some are gated; the gated node ids are listed.",
-              "  SKIPPED = NOT checked in this checkout.",
-              f"  {'/'.join(UNRESOLVED)} = this probe could not decide; the suite fails.",
+    lines += ["", "CAPABILITIES", ""]
+    lines += [f"  {state:<{_WIDTH}} = {meaning}" for state, meaning in LEGEND.items()]
+    lines += [f"  {'/'.join(UNRESOLVED)} = this probe could not decide; the suite fails.",
               "  States are read from the tests' real skip markers, not declared here.", ""]
     for capability in CAPABILITIES:
         state = verdicts[capability.claim]
         needs_met = all(present[n] for n in capability.needs)
+        missing = [n for n in capability.needs if not present[n]]
         lines.append(f"  [{state:<{_WIDTH}}] {capability.claim}")
         for spec in capability.tests:
             lines += _node_lines(spec, needs_met)
         if not capability.tests:
-            lines.append("      no automated test - regenerate with scripts/reproduce_results.ps1")
+            lines.append(f"      no automated test in this suite - {capability.manual}")
         if state in (SKIPPED, PARTIAL):
-            missing = [n for n in capability.needs if not present[n]]
             lines.append(f"      blocked on: {', '.join(missing) or 'a gate this report cannot name'}")
+        elif missing:
+            # UNTESTED (and any UNRESOLVED state) still names its absent inputs:
+            # the state says nothing here checks the claim, this says the reader
+            # could not check it by hand on this machine either.
+            lines.append(f"      prerequisites absent: {', '.join(missing)}")
 
     lines += ["", "EXERCISED ON A BARE CHECKOUT", ""]
     for claim, spec in ALWAYS_EXERCISED:
@@ -467,9 +528,15 @@ def build_report() -> tuple[str, dict[str, str]]:
 
     fully = sum(1 for v in verdicts.values() if v == RUNS)
     partly = sum(1 for v in verdicts.values() if v == PARTIAL)
-    lines += ["", f"{fully}/{len(CAPABILITIES)} gated capabilities are fully exercised in "
-                  f"this checkout; {partly} partly.", ""]
-    if fully + partly < len(CAPABILITIES):
+    untested = sum(1 for v in verdicts.values() if v == UNTESTED)
+    lines += ["", f"{fully}/{len(CAPABILITIES)} capabilities are fully exercised in this "
+                  f"checkout; {partly} partly; {untested} with no automated test on any "
+                  "machine.", ""]
+    # Bootstrapping is what closes a gap caused by a MISSING INPUT, so the hint
+    # is conditioned on one being missing. Conditioning it on the verdicts
+    # instead — as this did — tells a fully bootstrapped reader to bootstrap,
+    # because UNTESTED is a gap no download can close.
+    if not all(present.values()):
         lines += ["Bootstrap with `python scripts/fetch_artifacts.py` (GitHub Release) or",
                   "`python -m engine.train_engine` (needs the dataset). See docs/INSTALL.md.", ""]
     lines.append("=" * 78)
@@ -497,6 +564,16 @@ def test_bootstrap_state_is_disclosed():
         assert prerequisite.key in report, (
             f"prerequisite missing from the printed report: {prerequisite.key!r}"
         )
+    for state in sorted(set(verdicts.values())):
+        assert state in LEGEND or state in UNRESOLVED, (
+            f"the report prints the state {state!r} and the legend does not define "
+            "it. A state a reader cannot look up is worse than no state: add it to "
+            "LEGEND with what it actually means."
+        )
+        if state in LEGEND:
+            assert f"  {state:<{_WIDTH}} = {LEGEND[state]}" in report, (
+                f"{state!r} is defined in LEGEND but its line is not in the report"
+            )
     count = re.search(r"\d+\s+passed,\s+\d+\s+skipped", report)
     assert not count, (
         f"the report publishes a fixed suite count ({count.group(0)!r}). The suite "
@@ -562,7 +639,12 @@ def test_capability_states_match_the_declared_prerequisites():
         and this fires here with nothing bootstrapped.
 
     `checked` then counts what was actually examined and asserts it covered every
-    capability, so no future `continue` can quietly empty this test again.
+    capability, so no future `continue` can quietly empty this test again. A
+    capability with no tests passes through a branch here without an assertion of
+    its own — `checked` counts it, the node loop has nothing to iterate — so the
+    state it is given is checked by
+    test_a_capability_with_no_test_is_never_reported_as_exercised instead, which
+    constructs both prerequisite conditions rather than reading this machine's.
     """
     present = {p.key: p.present for p in probe_prerequisites()}
     wrong = []
@@ -602,6 +684,69 @@ def test_capability_states_match_the_declared_prerequisites():
         "report can name what it is blocked on, or stop claiming the guarantee is "
         "exercised here."
     )
+
+
+def test_a_capability_with_no_test_is_never_reported_as_exercised():
+    """The over-claim UNTESTED exists to stop, checked in BOTH directions on every
+    machine instead of only the one the runner happens to be sitting at.
+
+    `classify` used to return RUNS for a capability whose `tests` is empty as soon
+    as its prerequisites were present. On any checkout holding results/*.json the
+    report therefore printed "[RUNS] The published ablation table is regenerable"
+    on one line and "no automated test" on the next, under a legend saying RUNS
+    means every named test executes here — of which there were none. A present
+    input is not a check of what is done with it.
+
+    Both prerequisite conditions are CONSTRUCTED here rather than read off this
+    machine, so neither branch can go vacuous on a bare checkout or on a
+    bootstrapped one. Restore the old `return RUNS if needs_met else SKIPPED` and
+    the all-present case fails here with nothing bootstrapped.
+    """
+    testless = [c for c in CAPABILITIES if not c.tests]
+    assert testless, (
+        "no capability declares tests=() any more. If every claim is automated "
+        "now, delete UNTESTED and this test together — do not leave behind a "
+        "state that nothing can produce and that nothing therefore checks."
+    )
+    keys = [p.key for p in probe_prerequisites()]
+    conditions = (
+        ("every prerequisite present", dict.fromkeys(keys, True)),
+        ("no prerequisite present", dict.fromkeys(keys, False)),
+    )
+    for capability in testless:
+        for label, present in conditions:
+            state = classify(capability, present)
+            assert state == UNTESTED, (
+                f"{capability.claim!r} names no test at all, yet with {label} this "
+                f"report calls it {state!r}. Whatever is on disk, nothing here "
+                f"verifies it: the honest state is {UNTESTED!r}."
+            )
+
+
+def test_untested_capabilities_name_the_manual_check():
+    """An UNTESTED claim must at least tell a judge how to check it by hand.
+
+    Without this, `manual=""` renders as a dangling "no automated test in this
+    suite - " and the disclosure states a gap while withholding the one thing
+    that would close it."""
+    for capability in CAPABILITIES:
+        if capability.tests:
+            assert not capability.manual, (
+                f"{capability.claim!r} names tests AND a manual procedure. The "
+                "report prints `manual` only for a capability with no tests, so "
+                "this one would never be seen — put it in the test's docstring."
+            )
+            continue
+        assert capability.manual.strip(), (
+            f"{capability.claim!r} has no automated test and no `manual` "
+            "procedure, so this report would disclose the gap and then leave the "
+            "reader with no way to close it. State the commands, or delete the "
+            "claim."
+        )
+        assert f"no automated test in this suite - {capability.manual}" in build_report()[0], (
+            f"the manual procedure declared for {capability.claim!r} is not in the "
+            "printed report, so it is documentation only this test can see"
+        )
 
 
 def test_declared_prerequisites_are_probeable():

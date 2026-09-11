@@ -12,6 +12,7 @@ caveat that quotes docs/limitations.md, a chart colour that matches the theme.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import re
@@ -60,6 +61,29 @@ EXPLANATION_VALUE_CAVEAT = (
     "operate on, which is why a byte count can read negative. The feature "
     "**names** are real named features, never embedding dimensions; only the "
     "units are standardised."
+)
+
+# What the benchmark table means for the thing actually running on this page.
+# It used to describe the live scorer with the two-stage phrasing the audit
+# retired after establishing that engine/predict.py holds exactly one load_model
+# and one predict_proba: there is no second stage for anything to escalate to.
+# The retired sentence is quoted in tier1_hardening_report.md and nowhere else --
+# tests/test_docs_claims.py bans it by pattern, so writing it down here in order
+# to retract it would break that guard on this file, which is the one surface it
+# was not watching when the sentence survived here.
+# The wording below mirrors README.md and docs/architecture.md deliberately, so a
+# judge reading the page and a judge reading the docs get the same sentence.
+#
+# No feature COUNT is quoted. Both documents say "30", and that number could not
+# be re-measured here (this checkout has no `artifacts/`), and CLAUDE.md is
+# explicit that an unverified figure does not go in front of a judge. The claim
+# that decides how to read the table is which model runs, not how wide it is.
+DEPLOYED_MODEL_NOTE = (
+    "Live scoring in this app is a **single XGBoost model** — one of two variants selected by "
+    "input format (PCAP → the full feature model, CSV → the flow-only model). The **fused** row "
+    "above is an **eval-side** model that does not run in the engine; engine-side fusion is "
+    "roadmap. The RSSM world model failed its lead-time gate and is not shipped — see "
+    "`docs/decisions/004`."
 )
 
 BENCHMARK_EMPTY_HINT = (
@@ -131,6 +155,110 @@ BENCHMARK_EMPTY_COMMANDS = (
     "python -m eval.harness --model forecast  # per-horizon table (results/forecast.json)\n"
     "python scripts/make_ablation_table.py --budget 0.01"
 )
+
+# ------------------------------------------------- k-step forecast (PS deliverable 3)
+# The panel this block feeds answers "what does this host look like over the next
+# k windows". The project's own audit established what that answer is worth, and
+# the caveat below is the load-bearing half of the panel, not decoration: at the
+# shipped 1 % FPR budget the k-step head fires no episode at any reported horizon,
+# and the oracle analysis showed that is a ranking limit rather than a threshold
+# to retune. Every figure quoted here is pinned against docs/limitations.md by
+# test_app.py::test_forecast_caveat_quotes_the_limitations_doc, so the panel
+# cannot drift into claiming more than the document supports.
+
+# Fragments quoted verbatim from docs/limitations.md, whitespace-normalised and
+# with markdown emphasis stripped. Same mechanism as LIMITATIONS_QUOTES above.
+FORECAST_LIMITATION_QUOTES = (
+    "There is no supported forward-forecast horizon.",
+    "test AUROC 0.844 at k=4, 0.842 at k=8",
+    "0/2 episodes at k=1, 4 and 8 alike",
+    "a ranking limit, not a calibration bug",
+    "93–96 % identical to the nowcast target",
+    "warning this system does claim comes from the horizon-0 classifier, not from forecasting"
+    " ahead",
+)
+
+FORECAST_HEADER_CAVEAT = (
+    "**Read this before the curve. There is no supported forward-forecast horizon.** The k-step "
+    "head has a real but modest ranking signal — **test AUROC 0.844 at k=4, 0.842 at k=8** — but "
+    "at the shipped 1 % FPR budget it fires **0/2 episodes at k=1, 4 and 8 alike**, and the "
+    "oracle-threshold analysis shows that is **a ranking limit, not a calibration bug**: no "
+    "threshold recovers it. So the curve below **orders** hosts by k-step risk. It does not "
+    "predict that an attack will happen, and a rising line here is not evidence that one will. "
+    "Two further reasons not to read it as prediction — the k-step target is **93–96 % identical "
+    "to the nowcast target**, so ranking it well is close to ranking the present well; and the "
+    "early **warning this system does claim comes from the horizon-0 classifier, not from "
+    "forecasting ahead** — that is section 2 above, not this panel. Full statement: "
+    "`docs/limitations.md`."
+)
+
+# Drawn INTO the axes, not beside them: a screenshot of the curve is what travels
+# off this page, and it has to carry the caveat with it.
+FORECAST_FIGURE_CAVEAT = (
+    "ranking signal — no validated operating point: 0/2 episodes at k=1, 4 and 8 "
+    "at the 1 % FPR budget"
+)
+
+FORECAST_CURVE_CAPTION = (
+    "One row per horizon k for this host's **newest** source window; `seconds_ahead` is k × the "
+    "window stride the engine reports. The threshold is that horizon's **own** 1 %-FPR operating "
+    "point, so a crossing means the host ranks in the top 1 % of benign host-windows at that "
+    "horizon — the same crossing that caught 0 of 2 real episodes in evaluation. **`stage` and "
+    "`technique` describe the SOURCE window's observed pattern — the evidence behind the "
+    "forecast — not a predicted future stage**: `engine.forecast` has no future features to "
+    "infer one from, so they are the same for every k and this panel will not relabel them as a "
+    "progression."
+)
+# The table's own heading. It used to read "predicted stage progression", which
+# is what the panel was asked for and NOT what engine/forecast.py computes — the
+# stage comes from the source window through the nowcast's own rules. Naming a
+# column for the feature you wanted rather than the one you have is the exact
+# failure this project keeps removing.
+FORECAST_STAGE_TABLE_HEADING = (
+    "**Evidence behind each horizon** — the source window's stage and technique, not a "
+    "predicted future stage"
+)
+
+# The three ways this panel can legitimately have nothing to draw. They are kept
+# apart because they have three different fixes, and because a panel that renders
+# one empty box for all of them teaches a judge nothing.
+FORECAST_MISSING_TEXT = (
+    "**The k-step forecaster is not present in this checkout** — there is no `engine/forecast.py` "
+    "to import, so this panel has nothing to read. It is a separate module from the horizon-0 "
+    "engine that sections 2–4 run, which is why those still render. Nothing here is stubbed or "
+    "simulated: an absent forecaster is shown as absent."
+)
+FORECAST_NO_ENTRYPOINT_TEXT = (
+    "**`engine/forecast.py` is present but exposes no `forecast_file(input_path, out_dir, "
+    "fpr_budget)`** — the entry point this panel is built against. Until it does there is nothing "
+    "for the panel to call, and it will not invent a curve to fill the space."
+)
+FORECAST_NO_HORIZONS_TEXT = (
+    "**The forecaster ran and reported no horizon with a persisted k-step model**, so there is no "
+    "risk curve to draw. Each missing horizon's own reason is in the table below, verbatim from "
+    "the engine — this panel does not substitute a horizon-0 score for a missing k."
+)
+FORECAST_NO_CURVE_TEXT = (
+    "**The forecaster has a persisted horizon but returned no usable per-host risk curve for this "
+    "input**, so there is nothing to plot. That is what the engine returned for this capture; it "
+    "is not a panel that failed."
+)
+
+# The engine calls its output a probability. The project claims only a ranking,
+# so the column says both rather than letting the header make the stronger claim
+# (same device as EXPLANATION_VALUE_COLUMN).
+KSTEP_SCORE_COLUMN = "probability (ranking score)"
+# Not "alert": at this budget a crossing is not a validated alert, and a column
+# headed `alert` would undo the caveat three lines above it.
+KSTEP_ALERT_COLUMN = "crosses k-step threshold"
+
+# A horizon's 1 %-FPR threshold sits on the model's raw score scale and can be
+# ~1e-5 while the scores are ~1e-1. On one linear axis the threshold then lies on
+# the x-axis and every point reads as a dramatic crossing. Past this ratio between
+# the largest and smallest positive value on the chart the axis goes logarithmic,
+# so the distance between score and threshold is legible rather than flattering.
+# A presentation rule over values the engine supplies — not a model parameter.
+CURVE_LOG_SCALE_RATIO = 100.0
 
 
 # --------------------------------------------------------------- app config
@@ -271,19 +399,43 @@ def _names_a_file(component: str) -> bool:
     return bool(_FILE_SUFFIX.search(component.rstrip(_TRAILING_PUNCT)))
 
 
+# How far ahead `_separator_ahead` may look. The scan runs once per SPACE inside
+# a path component, so an unbounded one is quadratic in the line length: measured
+# on this repo, a hostile 4 KB line took 0.14 s, 32 KB 8.8 s and 200 KB 342 s —
+# and every one of those seconds is the Streamlit page frozen. No message this
+# repo raises reaches that shape (quotes and commas are stop characters, and a
+# real 39 KB pandas error redacts in 0.001 s), but an exception message carries
+# attacker-influenced text in general, so the scan is bounded rather than trusted.
+#
+# The cap is past Windows' own MAX_PATH of 260, so no real path is truncated by
+# it. Past the cap the answer is "no separator ahead", which ends the component at
+# the space and hands the rest to _consume_absolute_path's directory branch: the
+# whole remainder of the line is replaced by REDACTED_PATH. That is the coarse
+# fallback, and it errs toward over-redaction — the safe direction (guarantee 4).
+SEPARATOR_LOOKAHEAD_CHARS = 512
+
+# Same membership test as `_PATH_STOP`, compiled: the bounded scan below runs in
+# C rather than a Python character loop, which is what keeps the bounded cost of
+# the pathological line in milliseconds instead of seconds.
+_PATH_STOP_RE = re.compile("[" + re.escape("".join(sorted(_PATH_STOP))) + "]")
+
+
 def _separator_ahead(text: str, start: int, sep: str) -> bool:
     """Is another separator of the SAME style still ahead on this line?
 
     This is what lets a space be part of a directory name: `John Smith Jr\\x` has
     a backslash ahead of it and continues, `b.json read/write failed` does not —
     a Windows path's separators are backslashes, and `read/write` is prose.
+
+    The search is bounded to SEPARATOR_LOOKAHEAD_CHARS (see the constant for why
+    and for what the bound costs). Within the window the answer is exact: True
+    iff a separator appears before any `_PATH_STOP` character.
     """
-    for c in text[start:]:
-        if c == sep:
-            return True
-        if c in _PATH_STOP:
-            return False
-    return False
+    window = text[start:start + SEPARATOR_LOOKAHEAD_CHARS]
+    at_sep = window.find(sep)
+    if at_sep < 0:
+        return False
+    return _PATH_STOP_RE.search(window, 0, at_sep) is None
 
 
 def _consume_absolute_path(text: str, start: int, sep: str) -> tuple[int, str]:
@@ -292,8 +444,17 @@ def _consume_absolute_path(text: str, start: int, sep: str) -> tuple[int, str]:
     Components are read one at a time. A space inside a component is consumed
     only while the component does not yet name a file AND another same-style
     separator is still ahead — the two conditions that separate `John Smith Jr\\`
-    from `a.pcap read/write`. The scan stops at the first component that names a
-    file, because nothing follows a file in a path.
+    from `a.pcap read/write`.
+
+    What ends the scan is the SEPARATORS, not a file name: a component is
+    followed by another only while a separator immediately follows it, so the
+    scan ends at the first component that no separator follows. `_names_a_file`
+    never halts it mid-path — in `C:\\Users\\john.smith\\secret\\capture.pcap`
+    the component `john.smith` satisfies `_names_a_file`, and the scan correctly
+    runs past it to `capture.pcap` because a separator follows. `_names_a_file`
+    decides two other things: whether a SPACE ends the component it sits inside,
+    and whether the FINAL component is returned as a file name or handed to the
+    directory branch below.
     """
     i, n = start, len(text)
     last = ""
@@ -378,9 +539,21 @@ def redact_paths(text: str) -> str:
        ends, and the safe direction of failure is to take too much: an
        over-redacted clause costs a sentence, an under-redacted one puts a name
        on the projector.
-    5. Consumption **stops at the first component that names a file**, so prose
-       that merely contains a slash survives: `C:\\a\\b.json read/write failed`
-       keeps both `b.json` and `read/write`.
+    5. Consumption **follows the separators**, and a space ends a component that
+       already names a file. The scan reads one component at a time and continues
+       only while a separator immediately follows; it ends at the first component
+       that no separator follows. A file-naming component in the MIDDLE of a path
+       does **not** stop it — in `C:\\Users\\john.smith\\secret\\capture.pcap`,
+       `john.smith` names a file by this module's test and the scan still reaches
+       `capture.pcap`, because a separator follows it. What the file test decides
+       is (a) whether a SPACE ends the component it sits inside, which is why
+       `C:\\a\\b.json read/write failed` keeps both `b.json` and `read/write`,
+       and (b) whether the FINAL component is kept under guarantee 3 or
+       over-redacted under guarantee 4.
+    6. The scan is **bounded**: deciding (a) looks ahead at most
+       SEPARATOR_LOOKAHEAD_CHARS characters, so a hostile message cannot make
+       this function quadratic and freeze the page. Past the bound the component
+       ends at the space and guarantee 4 takes the rest of the line.
 
     What it is not: a secrets filter, and not a rule-matching input. It shapes
     only what an operator SEES — `failure_card` matches its rules against the
@@ -766,3 +939,247 @@ def forecast_horizons() -> pd.DataFrame:
             "episodes": f"{pt['episodes_detected']}/{pt['episodes_total']}",
         })
     return pd.DataFrame(rows)
+
+
+# ------------------------------------------------- k-step forecast (PS deliverable 3)
+# Everything below reads a dict from `engine.forecast.forecast_file`, whose shape
+# is fixed by the shared k-step API contract (`horizons`, `stride_seconds`,
+# `unavailable_horizons`, `forecast`, `per_host_curve`, plus everything
+# `engine.predict.predict_file` already returns). The module is built in a
+# separate workstream, so every reader here treats a missing or malformed key as
+# something to SAY rather than something to fill in: this panel must never put a
+# number on screen that the engine did not hand it.
+
+FORECAST_MODULE = "engine.forecast"
+# The forecaster re-runs the pipeline, and the pipeline appends to a ledger. It
+# is therefore given its own directory under the session dir, exactly as the
+# what-if is: section 5 verifies the chain the nowcast wrote, and a second
+# pipeline appending to that chain would change the record count under the
+# judge's feet mid-demo.
+FORECAST_SUBDIR = "forecast"
+
+
+class ForecastUnavailable(RuntimeError):
+    """The k-step forecaster cannot run here, and no input would change that.
+
+    Distinct from a pipeline failure: the capability is absent (no module, no
+    entry point), not the input bad. The UI renders it as an empty state naming
+    what is missing, never as a red error card telling a judge to fix something
+    that is not broken.
+    """
+
+
+def run_forecast(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
+    """k-step forecast for one input, via `engine.forecast.forecast_file`.
+
+    The module is imported defensively because it ships from another workstream
+    and may not exist in a given checkout. Absence is detected with `find_spec`
+    rather than by catching ImportError, so that a forecaster which is present
+    but itself fails to import — a missing third-party dependency, a syntax
+    error — surfaces as the failure it is instead of being reported as "not
+    shipped". The two have different fixes and must not render identically.
+    """
+    if importlib.util.find_spec(FORECAST_MODULE) is None:
+        raise ForecastUnavailable(FORECAST_MISSING_TEXT)
+    from engine import forecast
+
+    forecast_file = getattr(forecast, "forecast_file", None)
+    if forecast_file is None:
+        raise ForecastUnavailable(FORECAST_NO_ENTRYPOINT_TEXT)
+    return forecast_file(
+        input_path, out_dir=Path(out_dir) / FORECAST_SUBDIR, fpr_budget=fpr_budget
+    )
+
+
+def _curve_points(fc: dict, host: str) -> list[dict]:
+    """`per_host_curve[host]`, or [] when the engine reported nothing for it."""
+    curves = fc.get("per_host_curve")
+    if not isinstance(curves, dict):
+        return []
+    points = curves.get(host)
+    if not isinstance(points, (list, tuple)):
+        return []
+    return [p for p in points if isinstance(p, dict)]
+
+
+def _newest_window_entries(fc: dict, host: str) -> dict[int, dict]:
+    """`forecast` rows for this host's newest source window, keyed by k.
+
+    The curve carries k / seconds_ahead / probability / alert; the per-(host,
+    window, k) rows carry the threshold, stage and technique the table needs.
+    They are joined on the NEWEST source window because that is the window the
+    contract says `per_host_curve` is built from — joining on any other would
+    caption one window's curve with another window's stage.
+    """
+    rows = [f for f in (fc.get("forecast") or []) if isinstance(f, dict)
+            and f.get("host") == host]
+    starts = [s for s in (_as_fraction(f.get("window_start")) for f in rows) if s is not None]
+    if not starts:
+        return {}
+    newest = max(starts)
+    out: dict[int, dict] = {}
+    for f in rows:
+        if _as_fraction(f.get("window_start")) != newest:
+            continue
+        k = _as_int(f.get("k"))
+        if k is not None:
+            out[k] = f
+    return out
+
+
+KSTEP_CURVE_COLUMNS = ("k", "seconds_ahead", "probability", "threshold",
+                       "alert", "stage", "technique")
+
+
+def kstep_curve(fc: dict, host: str) -> pd.DataFrame:
+    """One host's risk curve: a row per horizon k, newest source window.
+
+    `seconds_ahead` falls back to k × `stride_seconds` only because the contract
+    DEFINES it that way; when neither is readable the cell stays empty rather
+    than being filled with a plausible number.
+    """
+    detail = _newest_window_entries(fc, host)
+    stride = _as_fraction(fc.get("stride_seconds"))
+    rows = []
+    for point in _curve_points(fc, host):
+        k = _as_int(point.get("k"))
+        if k is None:                 # a point with no horizon indexes nothing
+            continue
+        entry = detail.get(k, {})
+        seconds = _as_fraction(point.get("seconds_ahead"))
+        if seconds is None and stride is not None:
+            seconds = k * stride
+        rows.append({
+            "k": k,
+            "seconds_ahead": seconds,
+            "probability": _as_fraction(point.get("probability")),
+            "threshold": _as_fraction(entry.get("threshold")),
+            "alert": bool(point.get("alert")),
+            "stage": entry.get("stage"),
+            "technique": entry.get("technique"),
+        })
+    if not rows:
+        return pd.DataFrame(columns=list(KSTEP_CURVE_COLUMNS))
+    df = pd.DataFrame(rows)[list(KSTEP_CURVE_COLUMNS)]
+    return df.sort_values("k").reset_index(drop=True)
+
+
+def kstep_plottable(curve: pd.DataFrame) -> pd.DataFrame:
+    """The subset of a curve that can honestly be drawn.
+
+    A point whose score or seconds-ahead the engine did not supply is not
+    plotted — but it is not dropped from the TABLE either, so the gap is visible
+    on the page instead of being closed by a line drawn through it.
+    """
+    if curve.empty:
+        return curve
+    ok = [i for i, row in curve.iterrows()
+          if _as_fraction(row["probability"]) is not None
+          and _as_fraction(row["seconds_ahead"]) is not None]
+    return curve.loc[ok].reset_index(drop=True)
+
+
+def kstep_use_log_scale(curve: pd.DataFrame) -> bool:
+    """Should the risk curve's y-axis be logarithmic? (see CURVE_LOG_SCALE_RATIO)"""
+    if curve.empty:
+        return False
+    values = [v for v in (_as_fraction(x) for x in
+                          list(curve["probability"]) + list(curve["threshold"]))
+              if v is not None and v > 0]
+    if len(values) < 2:
+        return False
+    return max(values) / min(values) >= CURVE_LOG_SCALE_RATIO
+
+
+def kstep_curve_rows(curve: pd.DataFrame) -> list[dict]:
+    """Display rows for the stage-progression table.
+
+    The score and crossing columns are named for what the project claims — a
+    ranking, and a threshold crossing — rather than for a probability of attack
+    and an alert (see KSTEP_SCORE_COLUMN / KSTEP_ALERT_COLUMN).
+    """
+    rows = []
+    for _, row in curve.iterrows():
+        probability = _as_fraction(row["probability"])
+        threshold = _as_fraction(row["threshold"])
+        rows.append({
+            "horizon_k": int(row["k"]),
+            "seconds_ahead": _as_fraction(row["seconds_ahead"]),
+            KSTEP_SCORE_COLUMN: probability,
+            "threshold": threshold,
+            KSTEP_ALERT_COLUMN: bool(row["alert"]),
+            "stage": row["stage"],
+            "technique": row["technique"],
+        })
+    return rows
+
+
+def kstep_hosts(fc: dict, top: int = 10) -> list[str]:
+    """Hosts with a curve, ranked by peak k-step score (what an analyst reads first).
+
+    A host whose every point came back unreadable keeps its place in the list
+    rather than disappearing from the picker: its curve then renders as blanks,
+    which says "the engine gave us nothing for this host" — vanishing says
+    nothing at all.
+    """
+    curves = fc.get("per_host_curve")
+    if not isinstance(curves, dict):
+        return []
+    ranked: list[tuple[float, str]] = []
+    for host, points in curves.items():
+        if not isinstance(points, (list, tuple)) or not points:
+            continue
+        scores = [s for s in (_as_fraction(p.get("probability"))
+                              for p in points if isinstance(p, dict)) if s is not None]
+        ranked.append((max(scores) if scores else -math.inf, str(host)))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [host for _, host in ranked[:top]]
+
+
+def kstep_unavailable_rows(fc: dict) -> list[dict]:
+    """`unavailable_horizons` as table rows — the k, and the engine's own reason.
+
+    A horizon with no model is STATED. A curve that quietly skips k=8 reads as a
+    forecast that covered every horizon it was asked for, which is the silence
+    this whole page exists to break.
+    """
+    raw = fc.get("unavailable_horizons")
+    if not isinstance(raw, dict) or not raw:
+        return []
+    rows = []
+    for k, reason in raw.items():
+        parsed = _as_int(k)
+        rows.append({"horizon_k": parsed if parsed is not None else str(k),
+                     "why there is no forecast at this horizon": str(reason)})
+    return sorted(rows, key=lambda r: (isinstance(r["horizon_k"], str), r["horizon_k"]))
+
+
+def kstep_engine_caveat(fc: dict) -> str | None:
+    """The forecaster's OWN caveat (`forecast_caveat`), or None if it sent none.
+
+    `engine.forecast` ships FORWARD_FORECAST_CAVEAT in its return value
+    specifically so a UI can put it in front of a viewer, and the page renders
+    that string rather than only the one this module holds. The difference
+    matters: if the engine's measured finding changes, the page changes with it
+    instead of continuing to recite a constant that has quietly gone stale.
+    """
+    caveat = fc.get("forecast_caveat")
+    if isinstance(caveat, str) and caveat.strip():
+        return caveat.strip()
+    return None
+
+
+def kstep_empty_reason(fc: dict) -> str | None:
+    """Why the curve panel has nothing to draw, or None when it does.
+
+    Two emptinesses that look identical on screen and are not: a forecaster with
+    no persisted horizon at all, and one that has horizons but returned no curve
+    for THIS input. They are separated because their fixes are.
+    """
+    curves = fc.get("per_host_curve")
+    if isinstance(curves, dict) and any(curves.values()):
+        return None
+    horizons = fc.get("horizons")
+    if not isinstance(horizons, (list, tuple)) or not horizons:
+        return FORECAST_NO_HORIZONS_TEXT
+    return FORECAST_NO_CURVE_TEXT

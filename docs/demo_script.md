@@ -114,7 +114,7 @@ ledger does not have.
 
 > "One thing we won't hide: the recurrent world model we planned **failed its own acceptance
 > gate** — zero episodes detected. We recorded it as a negative result and shipped the encoder
-> that actually works. Two kill-chain stages have no public data at all, so we report no numbers
+> that actually works. Three kill-chain stages have no public data at all, so we report no numbers
 > for them. Everything you saw regenerates from a script."
 
 End on `docs/limitations.md` open on screen.

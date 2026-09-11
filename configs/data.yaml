@@ -57,6 +57,29 @@ windows:
   max_sequence_windows: 48          # 4 min of context
   forecast_horizon_windows: 8       # K = 8 -> 40 s ahead
 
+# The DEPLOYED engine's K-step forward forecast (engine/train_engine.py fits the
+# per-horizon heads, engine/forecast.py serves them). Nothing here is a claim
+# that forward forecasting works: at the shipped 1 % FPR budget the measured
+# k-step operating point fires 0 of 2 episodes at k = 1, 4 and 8 alike
+# (docs/limitations.md). These keys decide WHAT IS BUILT, not what is claimed.
+engine:
+  # Horizons in windows. seconds_ahead = k * windows.stride_seconds, so
+  # [1, 4, 8] is +5 s / +20 s / +40 s. Overlapping windows (15 s on a 5 s
+  # stride) mean k=1 and k=2 are near-nowcasts; only k>=3 is structurally ahead
+  # of the present.
+  # This list must stay a SUBSET of configs/eval.yaml `horizons`: a horizon the
+  # engine ships a model for is a horizon whose forecast quality the harness
+  # actually reports, and shipping an unevaluated k would be a capability with
+  # no published evidence behind it. Pinned by
+  # tests/test_forecast_engine.py::test_engine_horizons_are_a_subset_of_the_evaluated_ones.
+  forecast_horizons: [1, 4, 8]
+  # Source windows per host the k-step heads score forward FROM: the newest N of
+  # that host's windows, i.e. N * stride_seconds = 60 s of recent history at the
+  # shipped 5 s stride. Bounds the forecast output at len(forecast_horizons) * N
+  # rows per host on an arbitrarily long capture; `per_host_curve` uses only the
+  # newest of them.
+  forecast_source_windows_per_host: 12
+
 # The 7 stage classes. List order IS the label encoding — never reorder.
 stages:
   - benign

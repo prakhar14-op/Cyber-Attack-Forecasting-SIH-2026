@@ -53,6 +53,16 @@ HOSTS_PSEUDONYMISED = False
 FORECASTS_FILE = "forecasts.json"
 RUN_SUMMARY_FILE = "run_summary.json"
 
+# What predict_file puts in a caller-supplied `scoring_context` (see the
+# docstring). engine/forecast.py scores the k-step heads off `wf`, `X`,
+# `feature_columns` and `variant`; `probabilities`, `flows` and `threshold` are
+# the rest of what this run decided, so a second consumer does not have to
+# re-derive them. The names are pinned by tests/test_forecast_engine.py, so
+# renaming one here without renaming it there cannot silently leave the k-step
+# forecaster scoring nothing.
+SCORING_CONTEXT_KEYS = ("variant", "feature_columns", "wf", "X", "probabilities",
+                        "flows", "threshold")
+
 OUTPUT_SCHEMA = {
     "type": "object",
     "required": ["host", "window_start", "probability", "stage", "technique",
@@ -172,7 +182,8 @@ def _windows_from_input(cfg, input_path, anonymizer):
     return flows, wf, _coverage(0, dict.fromkeys(pf.DROP_REASONS, 0))
 
 
-def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None) -> dict:
+def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
+                 scoring_context: dict | None = None) -> dict:
     """Run the offline engine on one file. Writes out_dir/audit_chain.jsonl,
     forecasts.json (the forecast array) and run_summary.json (the run-level
     facts, including what could not be parsed); returns the same summary with
@@ -182,7 +193,16 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
     (source, window) rows and every flow it participated in are dropped from the
     already-extracted features before scoring — so the counterfactual runs
     through the IDENTICAL path (CSV or PCAP; the input is never re-parsed) and is
-    exact for the per-(host, window) model."""
+    exact for the per-(host, window) model.
+
+    scoring_context: an out-parameter, never part of the RETURN value. Pass a
+    dict and this fills it with the rows this run scored (SCORING_CONTEXT_KEYS:
+    the raw feature frame, the scaled matrix, the nowcast probabilities, the
+    flows and the variant). engine/forecast.py scores those same rows through the
+    per-horizon heads, so the k-step forecast and the nowcast are guaranteed to
+    be about identical features — re-extracting would re-parse the input and
+    could drift. It stays out of the return value because the returned dict is
+    persisted verbatim as run_summary.json."""
     cfg = load_config("data")
     set_seed(cfg["seed"])
     out_dir = Path(out_dir)
@@ -231,6 +251,15 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None)
     else:  # zero host-windows (empty/degenerate input): 0 alerts, no crash
         X = np.empty((0, len(feat_cols)), dtype=np.float32)
         probs = np.empty(0, dtype=float)
+
+    if scoring_context is not None:
+        # Filled unconditionally, including on a zero-row run: a caller that got
+        # an empty `wf` knows it saw nothing, whereas an unfilled context is
+        # indistinguishable from a caller bug.
+        scoring_context.update({
+            "variant": variant, "feature_columns": feat_cols, "wf": wf, "X": X,
+            "probabilities": probs, "flows": flows, "threshold": threshold,
+        })
 
     explainer = EX.ShapExplainer(booster, feat_cols)
     window_sec = cfg["windows"]["window_seconds"]

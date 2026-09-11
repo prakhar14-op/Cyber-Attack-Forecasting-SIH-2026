@@ -274,10 +274,20 @@ def _owning_stage_rule(when_key: str, stage_rules: dict) -> str | None:
     """The configs/data.yaml stage_rules key that owns the same (feature,
     comparison) as this technique_map `when` key, or None.
 
-    DERIVED by matching the key against the shipped stage_rules
-    (`sent_bytes_gt` <- `exfiltration_sent_bytes_gt`), so a technique rule keyed
-    on any stage feature is found — not only the ones a literal in this file
-    remembered to name. Two owners for one key is ambiguity, not a silent pick.
+    DERIVED by matching the WHOLE key — feature and comparison together — against
+    the shipped stage_rules (`sent_bytes_gt` <- `exfiltration_sent_bytes_gt`), so
+    every technique rule that reuses a stage (feature, comparison) is found, not
+    only the ones a literal in this file remembered to name.
+
+    The comparison is part of the match on purpose, and it is narrower than the
+    feature name: `recon.distinct_dst_ips_gt` has NO owner even though
+    `distinct_dst_ips` appears in stage_rules, because it appears there as
+    `exfiltration_distinct_dst_ips_lte`. "more than 20 destinations" and "at most
+    2 destinations" are two thresholds doing two different jobs, so they are not
+    one number with two homes and a `stage_rule:` reference between them would be
+    wrong. test_owning_stage_rule_pairs_feature_with_comparison pins that gap.
+
+    Two owners for one key is ambiguity, not a silent pick.
     """
     owners = [r for r in stage_rules if r == when_key or r.endswith("_" + when_key)]
     assert len(owners) <= 1, f"{when_key!r} is owned by more than one stage_rule: {owners}"
@@ -312,10 +322,17 @@ def test_technique_rules_never_copy_a_shared_stage_threshold(data_cfg):
     copied into engine/technique_map.yaml — a copy lets a recalibrated
     stage_rule hand an operator a stage and a technique that contradict.
 
-    The shared keys are DERIVED from configs/data.yaml stage_rules, so a rule
-    keyed on any stage feature is checked; a literal that is deliberately a
-    different number must be registered above, and stops being allowed the
-    moment it equals the stage threshold it shadows.
+    The shared keys are DERIVED from configs/data.yaml stage_rules, so every rule
+    keyed on the same (feature, comparison) as a stage_rule is checked — not a
+    list of keys someone remembered; a literal that is deliberately a different
+    number must be registered above, and stops being allowed the moment it equals
+    the stage threshold it shadows.
+
+    A rule that shares only the FEATURE with a stage_rule, under a different
+    comparison, is a different threshold and is not required to reference it.
+    That is the whole of what this test does not cover, and
+    test_owning_stage_rule_pairs_feature_with_comparison pins which rules are in
+    that position today so the set cannot grow unnoticed.
     """
     stage_rules = data_cfg["stage_rules"]
     referenced: Counter = Counter()
@@ -350,6 +367,65 @@ def test_technique_rules_never_copy_a_shared_stage_threshold(data_cfg):
     )
     for owner in referenced:
         assert owner in stage_rules
+
+
+# (stage, `when` key) -> the stage_rule that shares its FEATURE under a
+# DIFFERENT comparison. These are precisely the rules the derivation above does
+# not pair up, and the gap between what three comments used to say it checked
+# ("a rule keyed on any stage feature") and what it checks ("the same feature
+# AND comparison"). Pinned rather than tolerated: a new entry is a new place an
+# operator could be shown a stage and a technique resting on two unrelated
+# thresholds for one feature, and it should be read by a person before it ships.
+_FEATURE_SHARED_COMPARISON_DIFFERS = {
+    # `> 20 destinations` names a sweep; `<= 2 destinations` is part of what makes
+    # a window an exfiltration transfer. Different jobs, different numbers.
+    ("recon", "distinct_dst_ips_gt"): "exfiltration_distinct_dst_ips_lte",
+}
+
+
+def test_owning_stage_rule_pairs_feature_with_comparison(data_cfg):
+    """The derivation matches the WHOLE `when` key, and the comments now say so.
+
+    They used to say "a rule keyed on any stage feature is checked", which is
+    wider than the code: the match is on the (feature, comparison) pair, so
+    `recon.distinct_dst_ips_gt` is not paired with
+    `stage_rules.exfiltration_distinct_dst_ips_lte`. That is the right behaviour
+    — the two numbers answer different questions — but a description that
+    overstates a check is how the check stops being looked at, so both halves are
+    pinned here: the pairing rule itself, and the exact set of rules it leaves
+    unpaired in the shipped map.
+    """
+    rules = {"exfiltration_distinct_dst_ips_lte": 2, "scan_distinct_dst_ports_gt": 20}
+    assert _owning_stage_rule("distinct_dst_ips_gt", rules) is None, (
+        "the comparison stopped being part of the match: a `_gt` rule is now "
+        "paired with a `_lte` stage threshold and will be told to reference it"
+    )
+    assert _owning_stage_rule("distinct_dst_ips_lte", rules) == "exfiltration_distinct_dst_ips_lte"
+    assert _owning_stage_rule("distinct_dst_ports_gt", rules) == "scan_distinct_dst_ports_gt"
+
+    stage_rules = data_cfg["stage_rules"]
+    unpaired = {}
+    for stage, key, _thr in _technique_rule_conditions(_technique_map()):
+        if _owning_stage_rule(key, stage_rules) is not None:
+            continue
+        feature, _op = EX.parse_when_key(key)
+        shared = [
+            rule for rule in stage_rules
+            if rule.startswith(f"{feature}_") or f"_{feature}_" in rule
+        ]
+        if shared:
+            assert len(shared) == 1, f"{stage}.{key} shares its feature with {shared}"
+            unpaired[(stage, key)] = shared[0]
+
+    assert unpaired == _FEATURE_SHARED_COMPARISON_DIFFERS, (
+        f"the set of technique rules that share a stage_rule's FEATURE under a "
+        f"different comparison changed to {unpaired}.\n"
+        "test_technique_rules_never_copy_a_shared_stage_threshold does not "
+        "require these to be written as 'stage_rule:' references, because a "
+        "different comparison is a different threshold. Confirm that is still "
+        "true of each one, then update _FEATURE_SHARED_COMPARISON_DIFFERS — or, "
+        "if the two numbers really are the same number, give them one home."
+    )
 
 
 def test_every_technique_rule_key_names_a_comparison_the_engine_applies():

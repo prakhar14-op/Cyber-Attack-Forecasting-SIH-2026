@@ -13,11 +13,15 @@ the annotated attack completion) at a fixed false-positive budget — not by F1.
 
 ## 2. Pipeline
 
-```
-PCAP / CSV ─► extract ─► window features ─► TGN encoder ─► forecast head ─► engine ─► ledger
-             (packets)   30 named, window-   (temporal      (horizon k)     (explain,  (hash chain
-                          bounded             graph memory)                  threshold) + Merkle)
-```
+![Data flow. PCAP or CSV input is parsed by the streaming extractor into 30 named,
+window-bounded features; that one matrix feeds two lanes. The deployed lane, drawn solid, is the
+XGBoost scorer, a threshold fitted from a validation FPR budget, TreeSHAP named-feature
+explanations with an ATT&CK technique, and the tamper-evident ledger. The evaluation-only lane,
+drawn dashed, is the TGN encoder, the GRAFT causal transformer, the k-step forecast head and the
+rank-mean fusion; none of it runs in the engine.](img/01-architecture-dataflow.svg)
+
+`docs/img/02-model-stack.svg` carries the same split per component with each one's measured
+status, including the RSSM world model — a negative result that does not ship.
 
 **Ingest & features.** A single streaming extractor (`data/packet_features.py`) parses pcap
 bytes with raw struct offsets (~110k packets/s, bounded memory on a 4.3 GB flood capture) and

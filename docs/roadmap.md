@@ -20,7 +20,7 @@ repository, with the evidence that sizes it.
 | # | Work | Why | Evidence |
 |---|---|---|---|
 | 1.1 | **GPU seed-averaging** (`scripts/gpu_experiments.py`, pack E1): N TGN seeds, rank-mean | The only documented path to a **forward-horizon operating point**. The k-step head currently fires 0/2 episodes at the 1 % budget, and the oracle analysis proves no threshold recovers it — it is a ranking limit. Seed-averaging also replaces a single deterministic point with a distribution | `tier1_hardening_report.md` Part 2 + "Open decisions" #3 |
-| 1.2 | **Record the M11 lab capture** | `lateral_movement` and `exfiltration` have **zero** labelled windows in CIC-IDS-2018, so two of seven stages are untrained and unmeasured. The capture kit (`capture/capture.sh`, `capture/attack_scenarios.md`, `capture/label_capture.py`, `capture/CONSENT.md`) is written and untagged; it needs hardware and a session | `docs/stage_mapping.md` class table; `README.md` M11 row |
+| 1.2 | **Record the M11 lab capture** | `recon`, `lateral_movement` and `exfiltration` have **zero** labelled windows in CIC-IDS-2018, so three of seven stages are untrained and unmeasured. The capture kit (`capture/capture.sh`, `capture/attack_scenarios.md`, `capture/label_capture.py`, `capture/CONSENT.md`) is written and untagged; it needs hardware and a session | `docs/stage_mapping.md` class table; `README.md` M11 row |
 | 1.3 | **Slow-scan degradation curve** | `capture/attack_scenarios.md` scenario 5 (`nmap -T1`) exists precisely to measure how lead time decays under pacing — the cheapest evasion in `docs/threat_model.md` §3.3. Currently **TBD** | `capture/attack_scenarios.md` §5; BUILD_PLAN 11.5 |
 | 1.4 | **Engine-side fusion** | The published headline is the rank-mean fused model, but the deployed engine scores with a **single XGBoost model**. The pitch number and the demo are different models, disclosed but not reconciled | `README.md` "One deployment note"; `docs/architecture.md` §3 |
 | 1.5 | **Causal refit of the fusion** | The fused rank transform is fitted on the split it scores, so its operating point is not computable online. A causal refit is already sized: AUROC ≈ 0.930 holds, F1 drops 0.172 → 0.053 | `tier1_hardening_report.md` defect #3 |
@@ -58,8 +58,10 @@ story, marked as what they are.
   decoy services placed on the hosts a forecast is rising on convert lead time into attacker
   cost and into a much cleaner label — a touch on a decoy is a near-zero-false-positive signal,
   which is exactly what §1.6 and `docs/dataset_quality.md` say the label supply lacks.
-- **Host and identity telemetry.** Two of the seven stages (`lateral_movement`, `exfiltration`)
-  are the ones network telemetry sees worst and endpoint/identity telemetry sees best. Fusing
+- **Host and identity telemetry.** Two stages (`lateral_movement`, `exfiltration`) are the ones
+  network telemetry sees worst and endpoint/identity telemetry sees best — a different two from
+  the three that have no labelled windows (§1.2), since `recon` is exactly what network telemetry
+  sees best. Fusing
   process and authentication events would address the same gap 1.2 attacks from the network side.
 - **Federated retraining.** Multiple air-gapped sites cannot pool traffic — that is the point of
   air-gapping. Sharing model updates rather than data is the standard answer, and it composes

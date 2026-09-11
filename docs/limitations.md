@@ -6,14 +6,24 @@ fabricating results. Every number below traces to a file: the model-comparison f
 figures from `results/forecast.json` / `results/world*.json`, and the flow-only vs full
 operating points from `artifacts/engine_threshold.json`. Nothing here is hand-entered.
 
-## 1. Two of the seven kill-chain stages have no training data at all
+## 1. Three of the seven kill-chain stages have no training data at all
 
-`lateral_movement` and `exfiltration` have **zero labelled windows** in CSE-CIC-IDS2018
-(see the class table in `docs/stage_mapping.md`: both are 0 across train, val and test).
-They exist in the taxonomy because the problem statement requires the full kill chain, and
-they are the specific reason the lab capture (M11) exists. Until that capture is recorded,
-**we report no per-class metric for those two stages** — any number we printed for them
-would be invented.
+`recon`, `lateral_movement` and `exfiltration` have **zero labelled windows** in our data
+(see the class table in `docs/stage_mapping.md`: all three are 0 across train, val and test).
+They are empty for two different reasons, and the distinction matters: `lateral_movement` and
+`exfiltration` are **absent from CSE-CIC-IDS2018 altogether** — the dataset contains no such
+attack — while `recon` has no labelled windows in the **four days we fetched** (decision 001),
+whose attacks map to `initial_access`, `impact` and `c2`. Either way we have nothing to measure
+against, so the consequence is the same. They exist in the taxonomy because the problem statement requires the full kill
+chain, and they are the specific reason the lab capture (M11) exists. Until that capture is
+recorded, **we report no per-class metric for those three stages** — any number we printed for
+them would be invented.
+
+Earlier revisions of this document, the slides and the demo script said *two*, naming only
+`lateral_movement` and `exfiltration`. That was wrong against our own class table, which has
+always shown `recon` at 0/0/0/0 as well. Understating a limitation is the same defect as
+overstating a result, so it is corrected here and the figure guard now derives the count from
+the table rather than from prose.
 
 Consequence: the shipped system forecasts a binary *infiltration probability* reliably, and
 assigns a stage from interpretable named-feature rules. It is not a validated 7-class

@@ -22,13 +22,27 @@ A resample can be degenerate — one class only, or no benign rows to hang an FP
 threshold on. Those are dropped and counted in `Interval.n_usable`, never
 replaced by a substituted value, and an interval with no usable resample raises.
 
-`annotate_split` is the one call a results writer needs. Every writer in eval/
-(harness, fused, forecast, world) ends up holding the same five arrays — y,
+`annotate_split` is the one call a NOWCAST results writer needs. Every writer in
+eval/ (harness, fused, forecast, world) ends up holding the same five arrays — y,
 score, host, window_start and the split's attacker episodes — and a result block
 of `fpr_<budget>` sub-dicts that already record the threshold they fired at. The
 helper turns those into `auroc_ci` on the block and `f1_ci` inside each
 operating point, so wiring a writer is one line rather than a reimplementation
 of the grouping and the refusal handling.
+
+A FORECASTING writer must call `annotate_horizon_split` instead. At horizon k the
+row indexed at `window_start = t` carries the label for `t + k*stride`, so the
+rows whose label IS the attack being forecast sit in the k*stride window BEFORE
+the episode starts. Clustering them by `t` alone hands exactly those rows
+host-level clusters, splitting one episode's correlated rows across groups the
+bootstrap then treats as independent — an interval too narrow, produced silently.
+`annotate_horizon_split` takes the horizon and the stride and shifts the episode
+windows itself; there is no way to call it without stating both.
+
+Refusal vs bug: the bootstrap raises `IntervalUnavailable` (a ValueError
+subclass) when it cannot honestly produce an interval, and a plain ValueError
+when the CALLER got the inputs wrong. `interval_or_reason` files only the former
+as `{"unavailable": ...}`; a caller bug propagates.
 """
 
 from __future__ import annotations
@@ -46,6 +60,28 @@ Statistic = Callable[[np.ndarray, np.ndarray], float]
 #: Prefix every results writer uses for an operating-point sub-block,
 #: `f"fpr_{budget}"` — `annotate_split` finds the points to annotate by it.
 FPR_BLOCK_PREFIX = "fpr_"
+
+#: Key a forecasting writer records its horizon under, in WINDOWS.
+#: `annotate_horizon_split` writes it; `annotate_split` refuses a block that
+#: carries a non-zero one, because a nowcast grouping would misplace its rows.
+HORIZON_KEY = "horizon"
+
+
+class IntervalUnavailable(ValueError):
+    """The evidence does not support an interval — a refusal, not a defect.
+
+    Raised only where the bootstrap has looked at the data and found it cannot
+    honestly answer: fewer than two clusters, a statistic already degenerate on
+    the full sample, every resample degenerate. `interval_or_reason` records
+    exactly these as `{"unavailable": <reason>}`.
+
+    A ValueError subclass so callers written against the old contract still
+    catch it, but a DISTINCT type on purpose: an input-validation ValueError
+    (length mismatch, an FPR budget outside [0, 1], a malformed operating-point
+    key) is a bug in the calling writer. Filing a bug as "no interval available"
+    is the silent-failure mode this project forbids, so those stay plain
+    ValueError and reach the operator.
+    """
 
 
 @dataclass
@@ -128,7 +164,7 @@ def cluster_bootstrap(
     _, inverse = np.unique(groups, return_inverse=True)
     n_groups = int(inverse.max()) + 1
     if n_groups < 2:
-        raise ValueError(
+        raise IntervalUnavailable(
             f"a cluster bootstrap needs >= 2 groups, got {n_groups} — every "
             "resample would be the original sample"
         )
@@ -138,7 +174,7 @@ def cluster_bootstrap(
 
     point = float(statistic(y_true, y_score))
     if not np.isfinite(point):
-        raise ValueError("the statistic is degenerate on the full sample")
+        raise IntervalUnavailable("the statistic is degenerate on the full sample")
 
     rng = np.random.RandomState(seed)
     draws: list[float] = []
@@ -148,7 +184,7 @@ def cluster_bootstrap(
         if np.isfinite(value):
             draws.append(value)
     if not draws:
-        raise ValueError(
+        raise IntervalUnavailable(
             f"all {n_resamples} resamples were degenerate — {n_groups} groups is "
             "too few, or one class lives entirely in one group"
         )
@@ -233,25 +269,42 @@ def f1_at_fpr_interval(
 
 
 def episode_group_ids(host: np.ndarray, window_start: np.ndarray,
-                      episodes: list[dict]) -> np.ndarray:
-    """Cluster label per row: the (host, episode) a row belongs to.
+                      episodes: list[dict], *,
+                      label_offset_seconds: float = 0.0) -> np.ndarray:
+    """Cluster label per row: the (host, episode) the row's LABEL belongs to.
 
-    A row inside an episode's [start, end] on that episode's attacking host joins
-    that episode's cluster; every other row clusters by host alone, so benign
-    host-time is still resampled at the host level rather than as independent
-    rows. Episode order fixes the labels, so the grouping is reproducible.
+    A row whose labelled time falls inside an episode's [start, end] on that
+    episode's attacking host joins that episode's cluster; every other row
+    clusters by host alone, so benign host-time is still resampled at the host
+    level rather than as independent rows. Episode order fixes the labels, so the
+    grouping is reproducible.
+
+    `label_offset_seconds` is the gap between the time a row is INDEXED at
+    (`window_start`) and the time its label DESCRIBES. It is 0 for a nowcast and
+    `horizon_windows * stride_seconds` for a forecaster, whose row at t carries
+    the label for t + k*stride (eval/dataset.py `_shift_target_by_horizon`). The
+    grouping must follow the label, not the index: at a positive offset the rows
+    that carry an episode's attack are the ones just BEFORE it starts, and
+    clustering them at offset 0 scatters one episode's correlated rows into
+    host-level groups the bootstrap then treats as independent — a narrower
+    interval than the evidence supports, with nothing on screen to say so.
     """
     host = np.asarray(host).astype(str)
     window_start = np.asarray(window_start, dtype=float)
     if host.size != window_start.size:
         raise ValueError(f"host/window_start length mismatch: {host.size}/{window_start.size}")
+    label_offset_seconds = float(label_offset_seconds)
+    if not np.isfinite(label_offset_seconds):
+        raise ValueError(
+            f"label_offset_seconds must be finite, got {label_offset_seconds}")
 
+    labelled_time = window_start + label_offset_seconds
     labels = np.array([f"host:{h}" for h in host], dtype=object)
     for i, ep in enumerate(episodes):
         inside = (
             (host == str(ep["host"]))
-            & (window_start >= float(ep["start"]))
-            & (window_start <= float(ep["end"]))
+            & (labelled_time >= float(ep["start"]))
+            & (labelled_time <= float(ep["end"]))
         )
         labels[inside] = f"episode:{i}:{ep['host']}"
     return labels
@@ -265,13 +318,19 @@ def interval_or_reason(interval_fn, *args, **kwargs) -> dict:
 
     The bootstrap above refuses an interval it cannot honestly produce — fewer
     than two clusters, a degenerate statistic on the full sample, every resample
-    degenerate. Those cases record `{"unavailable": <reason>}`, never a
-    substituted bound: an absent interval must read as absent, not as a measured
-    one that happens to be wide.
+    degenerate — by raising `IntervalUnavailable`. Those cases record
+    `{"unavailable": <reason>}`, never a substituted bound: an absent interval
+    must read as absent, not as a measured one that happens to be wide.
+
+    Only that type is caught. A plain ValueError from input validation (a length
+    mismatch, an FPR budget outside [0, 1] because a writer keyed a block
+    "fpr_5") is a bug in the caller, and a bug filed as "no interval available"
+    would ship a results JSON whose missing intervals all look like honest
+    refusals. It propagates.
     """
     try:
         return interval_fn(*args, **kwargs).as_dict()
-    except ValueError as exc:
+    except IntervalUnavailable as exc:
         return {"unavailable": str(exc)}
 
 
@@ -295,14 +354,15 @@ def annotate_split(
     episodes: list[dict],
     *,
     auroc_key: str = "auroc_ci",
+    label_offset_seconds: float = 0.0,
     n_resamples: int | None = None,
     level: float | None = None,
     seed: int | None = None,
 ) -> dict:
-    """Attach cluster-bootstrap intervals to one split's result block, in place.
+    """Attach cluster-bootstrap intervals to one NOWCAST result block, in place.
 
-    This is the whole writer-facing API: a results writer that already holds
-    `y_true`, `y_score`, `host`, `window_start` and the split's attacker
+    This is the whole writer-facing API for a horizon-0 writer: one that already
+    holds `y_true`, `y_score`, `host`, `window_start` and the split's attacker
     episodes calls this once, immediately after its `fpr_<budget>` sub-blocks
     are complete, and gets
 
@@ -311,6 +371,13 @@ def annotate_split(
 
     without restating the (attacker-host, episode) grouping or the refusal
     convention. Each value is `Interval.as_dict()` or `{"unavailable": reason}`.
+
+    A FORECASTING writer calls `annotate_horizon_split` instead; it is the only
+    entry point that can state a horizon, and it states it in windows and stride
+    rather than as a raw offset. `label_offset_seconds` here exists for that
+    delegation and for a writer whose label offset is not a whole number of
+    windows; a block declaring a non-zero `horizon` with a zero offset is
+    refused, because that combination is exactly the grouping bug.
 
     The F1 interval is computed at the threshold the block already records, not
     at a threshold refitted inside each resample: the shipped threshold is
@@ -321,7 +388,16 @@ def annotate_split(
 
     Returns the same `block` object, so a writer can chain if it prefers.
     """
-    groups = episode_group_ids(host, window_start, episodes)
+    if block.get(HORIZON_KEY) and not label_offset_seconds:
+        raise ValueError(
+            f"this block declares {HORIZON_KEY}={block[HORIZON_KEY]!r} but was "
+            "annotated with a zero label offset — its labels are shifted, so the "
+            "rows carrying an episode would cluster by host instead of by "
+            "episode. Call annotate_horizon_split(..., horizon_windows=k, "
+            "stride_seconds=stride)"
+        )
+    groups = episode_group_ids(host, window_start, episodes,
+                               label_offset_seconds=label_offset_seconds)
     points = [(k, v) for k, v in list(block.items())
               if k.startswith(FPR_BLOCK_PREFIX) and isinstance(v, dict)]
     if not points:
@@ -348,3 +424,70 @@ def annotate_split(
             n_resamples=n_resamples, level=level, seed=seed,
         )
     return block
+
+
+def annotate_horizon_split(
+    block: dict,
+    y_true,
+    y_score,
+    host,
+    window_start,
+    episodes: list[dict],
+    *,
+    horizon_windows: int,
+    stride_seconds: float,
+    auroc_key: str = "auroc_ci",
+    n_resamples: int | None = None,
+    level: float | None = None,
+    seed: int | None = None,
+) -> dict:
+    """`annotate_split` for a block whose labels are shifted k windows ahead.
+
+    eval/forecast.py and eval/world.py score rows indexed at `window_start = t`
+    against the label at `t + k*stride` — the same shift their lead time already
+    accounts for with `grace_seconds=k*stride`. The cluster bootstrap has to
+    account for it too: the rows carrying episode i's attack are the ones in
+    [start - k*stride, end - k*stride] on the attacking host, so the episode
+    windows are shifted back by the same amount before the grouping is built.
+
+    `horizon_windows` and `stride_seconds` are both required and neither has a
+    default, so the offset cannot be forgotten or guessed; the function derives
+    `k * stride` itself rather than accepting a pre-multiplied number, so it
+    cannot be given in the wrong unit either. It records
+    `block[HORIZON_KEY] = horizon_windows`, which makes the results JSON say
+    which grouping produced its intervals and makes a later `annotate_split` on
+    the same block refuse.
+
+    Returns the same `block` object.
+    """
+    if isinstance(horizon_windows, bool) or int(horizon_windows) != horizon_windows:
+        raise ValueError(
+            f"horizon_windows must be a whole number of windows, got "
+            f"{horizon_windows!r}")
+    horizon_windows = int(horizon_windows)
+    if horizon_windows < 0:
+        raise ValueError(
+            f"horizon_windows must be >= 0, got {horizon_windows} — a negative "
+            "horizon would cluster rows against episodes that have not started")
+    stride_seconds = float(stride_seconds)
+    if not np.isfinite(stride_seconds) or stride_seconds <= 0.0:
+        raise ValueError(
+            f"stride_seconds must be finite and > 0, got {stride_seconds} — pass "
+            "configs/data.yaml windows.stride_seconds, never a literal")
+
+    declared = block.get(HORIZON_KEY)
+    if declared is not None and int(declared) != horizon_windows:
+        raise ValueError(
+            f"block declares {HORIZON_KEY}={declared!r} but was annotated at "
+            f"horizon {horizon_windows} — one of the two is wrong, and the "
+            "intervals would describe a different estimand than the row")
+    block[HORIZON_KEY] = horizon_windows
+
+    # horizon 0 IS the nowcast: offset 0 and a falsy recorded horizon, so the
+    # delegation below stays inside annotate_split's contract unchanged.
+    offset = horizon_windows * stride_seconds
+    return annotate_split(
+        block, y_true, y_score, host, window_start, episodes,
+        auroc_key=auroc_key, label_offset_seconds=offset,
+        n_resamples=n_resamples, level=level, seed=seed,
+    )

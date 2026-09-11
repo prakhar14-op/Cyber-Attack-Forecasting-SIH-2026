@@ -1,11 +1,51 @@
 # Technical presentation — 5 slides (M12 deliverable)
 
 Content for the submission deck. Every number is reproducible via
-`python scripts/make_ablation_table.py`; slide 5 is `docs/limitations.md` verbatim-in-spirit.
+`python scripts/make_ablation_table.py`; slide 5's numbered list is bound by content to
+`docs/limitations.md`'s numbered sections, and the build fails if the two lists diverge.
+
+`scripts/build_deck.py` renders this file to `docs/deck/` as the .pptx the PS asks for.
+The `<!-- deck:… -->` comments are build markers, invisible in rendered markdown. A marked
+block goes **on the slide**; everything unmarked becomes that slide's **speaker notes**. That
+split is the only reason the deck can be readable from the back of a room without losing a
+sentence of what follows — the prose is still here, and it still reaches the presenter. Marker
+grammar is documented in `scripts/build_deck.py`; the builder refuses to produce a deck that
+exceeds five slides, overflows a slide, or drops one of the disclosures below.
+
+Two things the builder enforces that are easy to undo by accident:
+
+- **Each required disclosure is pinned to the slide that carries the claim it qualifies**, not
+  to the deck. The k-step correction is on slide 1 because slide 1 is where the *t+k* claim is
+  made; the lead-time attribution is on slide 3 because slide 3 is where the number is printed.
+  Moving one two slides away is the same as deleting it, and the build now says so.
+- **Slide 5's numbered five are `docs/limitations.md`'s numbered five, section for section, in
+  its order**, bound by content and not by count. The slide's own title sends a judge to that
+  document, so the two lists have to be the same list. The adaptive-attacker limitation is a
+  real one and stays on the slide — in the band and in the notes — but it is not numbered here,
+  because `docs/limitations.md` does not number it. Numbering it on the slide alone is how the
+  two lists diverged in the first place.
 
 ---
 
 ## Slide 1 — The problem, and why it is not classification
+
+<!-- deck:kicker -->
+SIH26153 · NTRO · theme: Blockchain & Cybersecurity
+
+<!-- deck:headline -->
+The problem statement asks: given traffic up to *t*, **forecast** infiltration at *t+k* — not
+"was this flow malicious?"
+
+<!-- deck:points -->
+- Unit of prediction: **(source host, 15 s window)**, 5 s stride — not per-flow, not whole-network
+- Success metric: **lead time** at a fixed false-positive budget
+- Hard constraints: fully offline, flow **and** packet features, graded LR baseline on the
+  identical matrix, file input, Apache-2.0
+
+<!-- deck:band the standard, and where we stand -->
+A model with better F1 and zero lead time has failed this problem. Ours: at the 1 % budget the
+k-step head **fires on 0 of 2 episodes at k = 1, 4 and 8** — forward is **ranking only** (test
+AUROC 0.844 at k=4, 0.842 at k=8). The lead time on slide 3 is the **horizon-0** classifier.
 
 **AI-based network attack forecasting (SIH26153, NTRO)**
 
@@ -13,20 +53,40 @@ Most IDS work answers *"is this flow malicious?"* — after the fact. The proble
 something harder: given traffic up to time *t*, **forecast** the infiltration probability and
 ATT&CK stage at *t+k*, explain it, and make the record tamper-evident.
 
-- Unit of prediction: **(source host, 15 s window)**, 5 s stride — not per-flow, not whole-network
-- Success metric: **lead time** at a fixed false-positive budget
-- *A model with better F1 and zero lead time has failed this problem.*
-- Hard constraints: fully offline, flow **and** packet features, graded LR baseline on the
-  identical matrix, file input, Apache-2.0
+**Say the band out loud; it is the frame for everything after it.** That is the PS's ask in the
+headline, not a capability claim, and the band is what we actually measured against it. The
+k-step head has **no supported forward operating point**: at the shipped 1 % FPR budget it fires
+on 0 of 2 episodes at k = 1, 4 *and* 8, and the oracle-threshold analysis says that is a ranking
+limit, not a threshold we forgot to retune. What it does have is a real but modest ranking
+signal — test AUROC 0.844 at k=4 and 0.842 at k=8 — carrying one further caveat a judge should
+hear: the k-step *target* is 93–96 % identical to the nowcast target, so ranking it well is close
+to ranking the present well. Every lead-time number in this deck comes from the **horizon-0**
+classifier. Sources: `docs/limitations.md` §4 and "Also worth knowing",
+`tier1_hardening_report.md`.
+
+The graded LR baseline is trained and scored on the **identical feature matrix**, which is what
+makes the comparison on slide 3 fair rather than flattering; everything is Apache-2.0.
 
 ---
 
 ## Slide 2 — Architecture
 
+<!-- deck:headline -->
+Causality is enforced, not assumed — and no raw identity reaches the model.
+
+<!-- deck:pipeline -->
 ```
 PCAP/CSV → streaming extractor → 30 window-bounded features → TGN temporal-graph memory
-        → causal Transformer (GRAFT) → forecast head (horizon k) → engine → tamper-evident ledger
+        → causal Transformer (GRAFT) → forecast head (horizon k): **ranking only**
+        → engine → tamper-evident ledger
 ```
+
+<!-- deck:points -->
+- **Packet + flow features** — TTL variance, TCP window, fragment flags, payload histogram, scan
+  signature, retransmissions — 110k packets/s in bounded memory
+- **Causal by construction** — `test_no_future_leakage` proves perturbing the future leaves the
+  past **bit-identical**
+- **Anonymised identity** — keyed-HMAC pseudonyms, per-epoch permutation, role-only node features
 
 - **Packet + flow features**: TTL variance, TCP window, fragment flags, payload histogram,
   **sequential-vs-random scan signature**, retransmissions — 110k packets/s, bounded memory
@@ -38,12 +98,13 @@ PCAP/CSV → streaming extractor → 30 window-bounded features → TGN temporal
 
 ---
 
-## Slide 3 — Results: temporal dynamics generalise, flow signatures do not
+## Slide 3 — Results: dynamics generalise, flow signatures do not
 
-Test = a **bot** day; trained on **brute-force + DoS** days. Nothing about the test family was
-seen in training. 1 % FPR budget.
+<!-- deck:kicker -->
+Trained on brute-force + DoS days · tested on an unseen **bot** day · 1 % FPR budget
 
-| model | AUROC | median lead | episodes |
+<!-- deck:table -->
+| model | AUROC | median lead (horizon-0) | episodes |
 |---|---|---|---|
 | **Fused (TGN + XGBoost, rank-mean)** | **0.933** | 4195 s (~70 min) | **2/2** |
 | XGBoost | 0.872 | 4208 s | 2/2 |
@@ -51,12 +112,28 @@ seen in training. 1 % FPR budget.
 | GRAFT (shipped config) | 0.701 | 1035 s | 2/2 |
 | Logistic regression *(graded baseline)* | 0.573 | 0 s | **0/2** |
 
+<!-- deck:chips What is actually new here -->
+- **Honest-by-construction** protocol
+- **Decorrelated** rank fusion
+- Ledger that **refuses to lie**
+
+<!-- deck:band carried with the claim — the lead column is horizon-0, not a t+k forecast -->
+n = 2 episodes, one attacker host (exact 95 % CI for 2/2: [0.158, 1.000]). **At this alert
+budget lead time does not separate from a matched-budget random baseline** — **AUROC is where
+the model earns its place**.
+
+Test = a **bot** day; trained on **brute-force + DoS** days. Nothing about the test family was
+seen in training. 1 % FPR budget.
+
 **Early warning:** both attack episodes are flagged **~49 and ~91 minutes before completion**
 (median ~70 min) at a 1 % false-positive budget — *precursor detection* on live windows, the
-PS's own lead-time definition. Forecasting **ahead** is verified as a **ranking** capability
-(AUROC ≈ 0.84 at 20 s and 40 s ahead); its fixed-budget operating point does not yet fire, which
-we state rather than hide. Every number is under one standardised key **and enforced training
-determinism** — repeated runs are bit-identical.
+PS's own lead-time definition. That whole column is the **horizon-0** classifier; the band above
+the table and the column header both say so, because it is the one number in this deck a judge
+is most likely to read as evidence of forecasting ahead. Forecasting **ahead** is a **ranking**
+result only (test AUROC 0.844 at k=4, 0.842 at k=8) with **no operating point that fires** at
+the 1 % budget — 0 of 2 episodes at k = 1, 4 and 8, and the oracle check says that is a ranking
+limit rather than a threshold waiting to be retuned. Every number is under one standardised key
+**and enforced training determinism** — repeated runs are bit-identical.
 
 *Caveats carried with this claim, from our own adversarial audit:* n = 2 episodes, both sessions
 of one attacker host — the exact 95 % CI for 2/2 is [0.158, 1.000]; **at this alert budget lead
@@ -66,6 +143,12 @@ model is clairvoyant — **AUROC is where the model earns its place**; detection
 XGBoost member, not the temporal-graph component; AUROC/F1 are inflated by row multiplicity
 (de-duplicated ≈ 0.89 / 0.04) and by benign subsampling. See `tier1_hardening_report.md` →
 Limitations & Confidence.
+
+*And which row the live demo actually is:* the fused row is an **evaluation-side** result.
+`engine/predict.py` loads one booster and calls `predict_proba` once — the deployed engine is a
+**single XGBoost model**, so the demo a judge runs corresponds to the **XGBoost row**, not the
+fused one. Engine-side fusion is on the roadmap (slide 5's band), not in the shipped binary. If
+a judge asks whether the demo is the 0.933 system, the answer is no, and this is where you say so.
 
 **What is actually new here** (the caveats above are about the *numbers*, not the contribution):
 
@@ -88,6 +171,23 @@ Limitations & Confidence.
 ---
 
 ## Slide 4 — Explainability and the audit ledger
+
+<!-- deck:headline -->
+Explainability is mandatory, so we made black-box output impossible.
+
+<!-- deck:points -->
+- Top-5 **named** features per alert (`payload_hist_0`, `distinct_dst_ips`…), a MITRE technique,
+  the flagged flows — the build fails if an explanation returns an index
+- **Tamper-evident ledger**: append-only hash chain + per-batch Merkle roots; HMAC pseudonyms,
+  never raw IPs
+- Edit a record → the verifier names its **exact index**. Rewrite the chain → the **signed,
+  chained checkpoint** catches it. Wrong weight hash → the engine **refuses to write**.
+- `python -m ledger.verify_cli` — a judge verifies **offline**
+
+<!-- deck:band the attack we could not close -->
+Truncating the chain **and** its checkpoint log together leaves two files that agree with each
+other. No scheme confined to those two files can detect it — closed by publishing the anchor
+line **before** the demo, and stated in `docs/limitations.md`.
 
 **Explainability is mandatory, so we made black-box output impossible.**
 Every alert carries top-5 **named** features (`payload_hist_0`, `distinct_dst_ips`, `syn`…),
@@ -116,9 +216,26 @@ limitation is stated in the module docstring, in the verifier's own output, and 
 
 ## Slide 5 — What this cannot do (read `docs/limitations.md`)
 
-1. **Two kill-chain stages have zero public data.** `lateral_movement` and `exfiltration` have
-   no labelled windows in CIC-IDS-2018, so **we report no metric for them** rather than invent
-   one. That is precisely what the lab capture is for.
+<!-- deck:points -->
+1. **Three kill-chain stages have zero public data** — `recon`, `lateral_movement`,
+   `exfiltration`: no labelled windows, **no metric reported**.
+2. **Four attack days ⇒ family-disjoint splits** — an honest cross-family test; stage metrics
+   are not meaningfully trainable.
+3. **CSV cannot carry packet features** — the engine runs a flow-only model and warns.
+   **Feed it a PCAP.**
+4. **The world model we planned failed** — the RSSM detected **0/2** episodes; we publish it as
+   a negative result with its recipe.
+5. **The packet parser is IPv4-only** — IPv6 and other ethertypes are counted and reported,
+   never featurised: an IPv6-only capture yields **zero alerts**.
+
+<!-- deck:band where this goes next -->
+GPU seed-averaging for a forward operating point, the M11 lab capture for the three missing
+stages, engine-side fusion, IPv6/QUIC — `docs/roadmap.md`. Not on it: an adaptive attacker
+defeats several **mandated packet features at zero cost** (`docs/threat_model.md`).
+
+1. **Three kill-chain stages have zero public data.** `recon`, `lateral_movement` and
+   `exfiltration` have no labelled windows in CIC-IDS-2018, so **we report no metric for them**
+   rather than invent one. That is precisely what the lab capture is for.
 2. **Four attack days ⇒ family-disjoint splits.** This makes our headline an honest
    cross-family test, but multi-class stage metrics are not meaningfully trainable.
 3. **CSV cannot carry packet features.** The PS accepts CSV *or* PCAP; a CSV physically lacks
@@ -128,15 +245,34 @@ limitation is stated in the module docstring, in the verifier's own output, and 
    **0/2** episodes — worse than the embeddings it consumed. A tuned retry recovered ranking
    (0.683 → 0.851 AUROC) but still 0/2. We ship the encoder that works and publish the RSSM as a
    **negative result with its recipe**.
-5. **An adaptive attacker defeats several of the mandated packet features at zero cost** — and
-   we measured the cost rather than guessing it. Jittering the attacker's own TTL and TCP window
-   turns a deterministic `ttl_var` of **0.000** into a large one for free; re-chunking a 1400 B
-   payload into 3×466 B moves **100 %** of the payload-histogram mass into a different bin while
-   delivering the same bytes (the bin edges are a committed config value); pacing an attack 15×
-   thins every per-window aggregate, which is enough to re-label a port scan from `recon` to
-   `c2`. These features are attacker-*written*, not observed. Full analysis — including which
-   features are expensive to fake, which is where the defence actually lives — is in
-   [docs/threat_model.md](threat_model.md).
+5. **The packet parser is IPv4-only.** `data/packet_features.py` reads a frame only when its
+   ethertype is `0x0800`; a VLAN tag is unwrapped and the inner ethertype used, and everything
+   else — IPv6 (`0x86DD`), frames too short to hold an IPv4 header, truncated IP headers — is
+   skipped before it can become a row, so **IPv6 is absent from all 30 features**. QUIC is not
+   skipped but is seen as opaque UDP. What the system refuses to do is be silent about it, because
+   "0 alerts" must never be indistinguishable from "nothing happened": every skipped frame is
+   counted against a named reason (`DROP_REASONS` in `data/packet_features.py`),
+   `engine/predict.py` turns those counters into an `unparsed_frames` block that reaches the
+   `predict_file` return value, `run_summary.json` and the Streamlit page, and
+   `tests/test_packet_features.py::test_ipv6_scan_is_counted_not_silently_dropped` pins it —
+   a 200-frame IPv6 scan must yield 0 rows **and** `drops["ipv6"] == 200`. Counted is not parsed:
+   an IPv6-only capture still produces no features, no forecasts and no ledger records. Closing
+   the gap means a parse path, not a better counter — `docs/limitations.md` §5,
+   `docs/roadmap.md` §1.10.
+
+**These five are `docs/limitations.md`'s five, in its order** — the slide's title sends a judge
+to that document, so the slide must not be a different list. The next paragraph is a limitation
+that document does not number; it is on the slide, in the band, but not inside the numbered five.
+
+**And one the numbered list does not carry: an adaptive attacker defeats several of the mandated
+packet features at zero cost** — and we measured the cost rather than guessing it. Jittering the
+attacker's own TTL and TCP window turns a deterministic `ttl_var` of **0.000** into a large one
+for free; re-chunking a 1400 B payload into 3×466 B moves **100 %** of the payload-histogram mass
+into a different bin while delivering the same bytes (the bin edges are a committed config value);
+pacing an attack 15× thins every per-window aggregate, which is enough to re-label a port scan
+from `recon` to `c2`. These features are attacker-*written*, not observed. Full analysis —
+including which features are expensive to fake, which is where the defence actually lives — is in
+[docs/threat_model.md](threat_model.md).
 
 **Where this goes next** (SIH sustainability criterion): GPU seed-averaging to recover a forward
 operating point, the M11 lab capture to obtain the two missing kill-chain stages, engine-side

@@ -9,18 +9,52 @@ It is deliberately NOT a spell-check of the docs. Each entry below is a specific
 claim-shaped phrasing with the measurement that refutes it, so a failure tells a
 contributor what is wrong with the sentence rather than that a word is forbidden.
 
-Scope is DISCOVERED, not listed. An earlier version enumerated seven files, and
-three claims corrected in an earlier round all landed in documents that
-enumeration did not name -- including `docs/INSTALL.md`, written by the same hand
-that wrote this guard. A guard that has to be extended by the author of the next
-document is a guard that will be out of date by the next document. Every
-markdown file in the repo is in scope the moment it is created; the only
-exclusions are the defect record itself.
+WHAT IS IN SCOPE, AND WHY IT IS NOT A LIST OF FILE TYPES
+--------------------------------------------------------
+Scope is DISCOVERED. Every revision of this guard that decided scope by listing
+something -- paths, then directories, then extensions -- has been escaped by a
+claim written just outside whatever was listed, and each time it was someone
+else who found the escape:
+
+  * an early version enumerated documents by name, and three corrected claims
+    landed in documents it did not name, `docs/INSTALL.md` among them;
+  * the next version discovered markdown and swept `tests/`, and a verifier ran
+    these same patterns over everything outside that scope and found a live hit
+    -- a caption on the running Streamlit demo page, in `app/streamlit_app.py`,
+    rendering the retired cascade claim to anyone who opened the app. The most
+    judge-visible code in the repository was out of scope because the scope was
+    a list of the places its author had thought of.
+
+So nothing here enumerates what may carry a claim. A file is in scope if its
+bytes decode as UTF-8 and its path is not one of the few named exclusions below.
+Prose is what a human reads, and no extension makes text stop being read: this
+sweeps markdown, Python (docstrings, comments, and the UI strings the app
+renders), YAML, shell and PowerShell, the CI workflow, and the SVG architecture
+diagrams, whose `<text>` labels a judge reads off a slide. Binary files are not
+excluded by name either -- they fail to decode and drop out on their own, so a
+new image format needs no maintenance here.
+
+There is deliberately NO size cap. A cap is a silent hole exactly the width of
+the file that crosses it.
 
 `tier1_hardening_report.md`, `diagnosis_report.md` and `docs/decisions/` are
 excluded on purpose: they are the record of these defects and have to quote them
 verbatim. If you need to write one of these sentences down in order to retract
 it, write it there.
+
+This file is excluded for the same reason and no other: it is the specification
+of the ban. It quotes every retired sentence in full, in `retired_sentences`, in
+order to prove the patterns still catch them -- so scanning it would fail the
+guard on its own evidence, and the tempting fix would be to delete the evidence.
+The exclusion is one named path, not a pattern, so it cannot widen.
+
+Dot-directories and `__pycache__` are pruned by the walk rather than excluded by
+name. `.venv` is a junction to a 1.5 GB interpreter tree on this machine and
+`.git` holds every historical revision of the very sentences this bans; neither
+is prose anyone reads. The one prose surface that pruning puts out of reach is
+`.github/workflows/ci.yml`, which is therefore pinned in UNREACHABLE_SCOPE and
+appended unconditionally -- it is one of the three places the suite-count claim
+has lived.
 
 HOW AN EXEMPTION WORKS, AND WHY IT IS NOT A WINDOW
 --------------------------------------------------
@@ -31,23 +65,32 @@ ratchet acquired a blind spot centred on the very paragraphs it existed to
 protect: `docs/INSTALL.md` says "Do **not** check the suite against a memorised
 pass/skip count", and `must not` / `do not check` / `three tests` / `opt-in` are
 ordinary English that occurs all over a corrected document. Measured by running
-the previous implementation over the present files: inserting each retired
-sentence at each paragraph boundary of each scanned file gives 8,722 insertion
-points, and the old exemptions stayed silent at **98 of them**, spread over ten
-files including `docs/INSTALL.md`, `README.md`, `docs/demo_script.md`,
-`capture/CONSENT.md`, `CLAUDE.md` and `scripts/fetch_artifacts.py`. The same
-measurement against the code below gives 0. That measurement is not a claim made
-here: it is what `test_retired_sentences_are_caught_inside_the_real_documents`
-computes on every run.
+the previous implementation over the scope as it stood at the time -- markdown
+only, before the test modules were added -- inserting each retired sentence at
+each paragraph boundary of each scanned file gave 8,722 insertion points, and
+the old exemptions stayed silent at 98 of them, spread over ten documents
+including `docs/INSTALL.md`, `README.md`, `docs/demo_script.md`,
+`capture/CONSENT.md`, `CLAUDE.md` and `scripts/fetch_artifacts.py`. Those two
+figures are a record of one run against one set of files and are not re-derived
+here; the live number is the one below.
+
+The same measurement against the code below gives ZERO escapes, at every
+insertion point of the current, wider scope. Deliberately no total is written
+down for it: an insertion-point count would go stale the moment a file is added,
+which is the defect `hardcoded-suite-count` exists to ban, and this file is the
+last place that should ship one. The escape count is not a claim made here
+either -- it is what
+`test_retired_sentences_are_caught_inside_the_real_documents` computes on every
+run, and it prints the totals when it fails.
 
 So the neighbourhood window is gone. An occurrence is exempt only when it lies
 inside one of the verbatim excerpts in `allow_exact` -- the actual retracting
 sentence, quoted from the document, tight around the phrase it exempts. A new
 sentence next door is not covered by its neighbour's exemption, which is the
 whole point. `test_every_allowance_is_anchored_in_a_real_document` then keeps the
-allowlist honest from the other side: an excerpt that no scanned document
-actually contains, or that does not itself contain a banned phrase, is dead
-weight pretending to be a considered exception, and fails.
+allowlist honest from the other side: an excerpt that no scanned file actually
+contains, or that does not itself contain a banned phrase, is dead weight
+pretending to be a considered exception, and fails.
 
 `test_retired_sentences_are_caught_inside_the_real_documents` re-runs the
 measurement above on every commit, so the ratchet is proved against the real
@@ -65,25 +108,39 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The record of the defects. These files exist to quote the retired sentences.
-EXCLUDED_FILES = frozenset({"tier1_hardening_report.md", "diagnosis_report.md"})
+# The record of the defects, plus this file. All three exist in order to quote
+# the retired sentences: the first two are the audit record, and this module
+# declares them in `retired_sentences` so the patterns can be proved against
+# them. Named paths, never patterns -- an exclusion that can match a file nobody
+# has written yet is a hole held open.
+EXCLUDED_FILES = frozenset({
+    "tier1_hardening_report.md",
+    "diagnosis_report.md",
+    "tests/test_docs_claims.py",
+})
 EXCLUDED_DIRS = frozenset({"docs/decisions"})
 
-# Non-markdown surfaces that carry claim-shaped prose in their docstrings or
-# comments, and that a judge or a contributor reads as documentation. These are
-# PINNED, not conditional: `.github/workflows/ci.yml` is one of the places the
-# suite-count claim has lived, and an earlier version dropped a renamed entry out
-# of scope silently because it filtered this tuple by `.exists()`.
-EXTRA_SCOPE = (
-    "eval/fused.py",
-    "scripts/fetch_artifacts.py",
+# Pruned by the walk rather than judged as prose: compiled bytecode is
+# generated, and the dot-directories are `.git` (every historical revision of
+# these sentences) and `.venv` (a junction to a 1.5 GB interpreter tree).
+# Pruning `.github` along with them is what UNREACHABLE_SCOPE repairs.
+PRUNED_DIR_NAMES = frozenset({"__pycache__"})
+
+# Prose surfaces the walk structurally cannot reach, appended unconditionally.
+# NOT filtered by `.exists()` -- an earlier version did that, and a renamed
+# surface then left SCOPE without anything failing.
+UNREACHABLE_SCOPE = (
     ".github/workflows/ci.yml",
 )
 
-# Discovery must not be able to silently collapse: these are the documents a
-# judge certainly reads.
+# Discovery must not be able to silently collapse, so the surfaces whose
+# DISAPPEARANCE should be loud are named. Discovery already survives a rename --
+# the file is in scope under its new name the moment it exists -- so what these
+# groups assert is the other direction: that a judge-facing surface still exists
+# and that the walk still returns it.
 CORE_SCOPE = (
     "README.md",
+    "JUDGES.md",
     "docs/INSTALL.md",
     "docs/architecture.md",
     "docs/limitations.md",
@@ -92,24 +149,66 @@ CORE_SCOPE = (
     "docs/demo_script.md",
 )
 
+# The running demo, and the group whose absence was the defect: a verifier ran
+# these patterns over everything this guard did not scan, and the only live hit
+# in the repository was a caption here rendering the retired cascade claim on
+# the page a judge looks at while the pitch is being made. The app is the one
+# surface where a retired claim is not merely written down but displayed.
+APP_SCOPE = (
+    "app/streamlit_app.py",
+    "app/panels.py",
+)
+
+# Non-markdown surfaces carrying claim-shaped prose in docstrings or comments.
+# The walk reaches both now; they stay pinned because each has already carried
+# one of these claims.
+CODE_SCOPE = (
+    "eval/fused.py",
+    "scripts/fetch_artifacts.py",
+)
+
+# Test modules are documentation too: their docstrings are claim-shaped prose,
+# and the "78 passed, 16 skipped" count lived in one of them. Both also carry a
+# retraction quote anchored in `allow_exact`, and narrowing the walk away from
+# `tests/` does trip `test_every_allowance_is_anchored_in_a_real_document` as
+# well -- but from there an unscanned anchor is indistinguishable from a deleted
+# one, and that test's advice is to delete the exemption, which would be exactly
+# the wrong repair. These two entries are what names the actual cause.
+PINNED_TEST_SCOPE = (
+    "tests/test_bootstrap_state.py",
+    "tests/test_app.py",
+)
+
 # Everything that must be scanned whatever the filesystem looks like.
-# `test_pinned_surfaces_are_scanned` fails if one of these stops existing or
-# stops being discovered -- that is the only part of SCOPE a rename can break
-# loudly, and it is why the list is written out rather than walked.
-PINNED_SCOPE = CORE_SCOPE + EXTRA_SCOPE
+PINNED_SCOPE = (
+    CORE_SCOPE + APP_SCOPE + CODE_SCOPE + PINNED_TEST_SCOPE + UNREACHABLE_SCOPE
+)
+
+
+def is_text(path: Path) -> bool:
+    """Whether this file is prose at all, decided by decoding it rather than by
+    its extension.
+
+    An extension allowlist is a list, and every list this guard has used has been
+    escaped by a claim written just outside it. Decoding cannot be escaped by
+    choosing a filename: a `.rst`, a `.toml` or an `.adoc` written tomorrow is
+    scanned tomorrow, and a `.png` drops out without anyone maintaining a rule
+    about images.
+    """
+    try:
+        path.read_bytes().decode("utf-8")
+    except (UnicodeDecodeError, OSError):
+        return False
+    return True
 
 
 def discover_scope() -> tuple[str, ...]:
-    """Every markdown file in the repo, minus the defect record, plus EXTRA_SCOPE.
+    """Every UTF-8-decodable file in the repository, minus the named exclusions,
+    plus the surfaces the walk cannot reach.
 
-    Dot-directories are pruned rather than filtered: `.venv` is a junction to a
-    1.5 GB interpreter tree on this machine and walking into it would make this
-    guard cost seconds. `.github` is therefore unreachable by the walk, which is
-    exactly why `ci.yml` is pinned in EXTRA_SCOPE instead.
-
-    EXTRA_SCOPE is appended unconditionally. Filtering it by `.exists()` -- as an
-    earlier version did -- means a renamed surface leaves SCOPE without anything
-    failing, and `ci.yml` quietly stops being checked.
+    UNREACHABLE_SCOPE is appended unconditionally and de-duplicated against the
+    walk, so an entry that later becomes reachable is scanned once rather than
+    twice, and an entry that never becomes reachable is still scanned.
     """
     found: list[str] = []
     for root, dirs, files in os.walk(REPO_ROOT):
@@ -117,15 +216,18 @@ def discover_scope() -> tuple[str, ...]:
         dirs[:] = [
             d for d in dirs
             if not d.startswith(".")
+            and d not in PRUNED_DIR_NAMES
             and (here / d).relative_to(REPO_ROOT).as_posix() not in EXCLUDED_DIRS
         ]
         for name in files:
-            if not name.endswith(".md"):
-                continue
             relative = (here / name).relative_to(REPO_ROOT).as_posix()
-            if relative not in EXCLUDED_FILES:
+            if relative in EXCLUDED_FILES:
+                continue
+            if is_text(here / name):
                 found.append(relative)
-    return tuple(sorted(found) + list(EXTRA_SCOPE))
+    ordered = sorted(found)
+    ordered += [s for s in UNREACHABLE_SCOPE if s not in found]
+    return tuple(ordered)
 
 
 SCOPE = discover_scope()
@@ -226,13 +328,28 @@ BANNED: tuple[BannedClaim, ...] = (
             r"tier[- ]?(?:one|1)\s+scorer",
         ),
         allow_exact=(
-            # README.md and docs/architecture.md both say "..., not a cascade".
-            # The exemption is those three words, not the paragraph around them.
+            # README.md, docs/architecture.md and the architecture SVG's own
+            # <text> label all say "..., not a cascade". The exemption is those
+            # three words, not the paragraph around them.
             "not a cascade",
+            # tests/test_figures.py states the retraction in the `why` of the
+            # figure claim that enforces it. Anchored to the retracting clause
+            # and stopped before its object, so it exempts this sentence and
+            # nothing that could be written after it.
+            "The audit retired the cascade claim after proving",
         ),
         retired_sentences=(
             "the deployed scorer is the cascade's fast tier",
             "the engine runs the fast tier of the cascade, escalating to the fused model",
+            # Verbatim from app/streamlit_app.py, where it was a live st.caption on
+            # the ablation panel of the running demo -- the only occurrence of any
+            # banned phrase anywhere outside the scope this guard had before, and
+            # the reason that scope is now the whole repository. Kept here so the
+            # ratchet re-proves at every insertion point of every scanned file
+            # that this exact wording is caught, rather than the fix being a
+            # one-off edit to one caption.
+            "Live scoring in this app uses the deployed fast tier (XGBoost); the "
+            "**fused** row is the eval-side headline model.",
         ),
     ),
     BannedClaim(
@@ -276,9 +393,18 @@ BANNED: tuple[BannedClaim, ...] = (
             "read the counts off their own run."
         ),
         patterns=_rx(r"\d+\s+passed,\s+\d+\s+(?:skipped|failed)"),
-        # Nothing in scope quotes a count, so nothing is exempt. The previous
+        # No DOCUMENT quotes a count. Two test docstrings do, both in order to
+        # retract the figure they quote, and both are anchored here verbatim
+        # rather than by exempting the files they live in. The previous
         # /do not (expect|check)/ and /must not/ escapes matched ordinary prose in
-        # four different documents and were what let a reintroduced count through.
+        # four different documents and were what let a reintroduced count through;
+        # these two anchors are the retracting clause and stop at its full stop.
+        allow_exact=(
+            # tests/test_bootstrap_state.py, naming the figure it retracts.
+            'published "78 passed, 16 skipped" in its own docstring',
+            # tests/test_app.py::test_demo_script_does_not_promise_a_fixed_test_count
+            "show '93 passed, 1 skipped', a count this repo cannot produce",
+        ),
         retired_sentences=(
             "The suite on a bare checkout is expected to report 78 passed, 16 skipped",
             'a green run here is "78 passed, 16 skipped"',
@@ -365,18 +491,17 @@ def paragraph_slots_literal(raw: str, sentence: str):
 
 @pytest.mark.parametrize("relative", PINNED_SCOPE)
 def test_pinned_surfaces_are_scanned(relative):
-    """Falsifiable: SCOPE is otherwise built by walking the filesystem, so every
-    discovered entry exists by construction and asserting it proves nothing. These
-    ten paths are asserted instead of discovered -- rename or delete one and this
-    fails, which is the only way a surface leaving SCOPE can be noticed at all.
-    `.github/workflows/ci.yml` is the case that matters: it is unreachable by the
-    walk (dot-directories are pruned) and it is one of the three places the
-    suite-count claim has lived."""
+    # Docstring assigned below, because it states how many paths are pinned and
+    # a written count of a list that grows is the defect `hardcoded-suite-count`
+    # bans. The last revision of this file said "ten" in this docstring while
+    # PINNED_SCOPE held twelve entries -- a stale count inside the guard whose
+    # purpose is to ban stale counts. `test_the_pinned_count_is_derived_not_written`
+    # fails if anyone puts a literal back.
     assert (REPO_ROOT / relative).exists(), (
         f"{relative} is pinned into this guard's SCOPE but does not exist. Either "
-        "restore it or follow the rename here and in CORE_SCOPE/EXTRA_SCOPE - a "
-        "missing file here means a judge-facing surface has stopped being checked "
-        "for retired claims."
+        "restore it or follow the rename into the PINNED_SCOPE group it belongs to "
+        "- a missing file here means a judge-facing surface has stopped being "
+        "checked for retired claims."
     )
     assert relative in SCOPE, (
         f"{relative} exists but discover_scope() no longer returns it. Do not "
@@ -384,12 +509,63 @@ def test_pinned_surfaces_are_scanned(relative):
     )
 
 
+test_pinned_surfaces_are_scanned.__doc__ = (
+    "Falsifiable: SCOPE is otherwise built by walking the filesystem, so every "
+    "discovered entry exists by construction and asserting it proves nothing. "
+    f"The {len(PINNED_SCOPE)} paths in PINNED_SCOPE are asserted instead of "
+    "discovered -- rename or delete one and this fails, which is the only way a "
+    "surface leaving SCOPE can be noticed at all. `.github/workflows/ci.yml` is "
+    "the case that matters: it is unreachable by the walk (dot-directories are "
+    "pruned) and it is one of the three places the suite-count claim has lived."
+)
+
+
+def test_the_pinned_count_is_derived_not_written():
+    """The count of pinned paths must be computed from PINNED_SCOPE, never typed.
+
+    This is not pedantry about a docstring: the previous revision of this file
+    said one number in prose while PINNED_SCOPE held another, inside the guard
+    whose whole subject is figures that outlive the thing they counted. Prose in
+    a test is read by contributors exactly as documentation, and this file is
+    excluded from its own document scan, so nothing else would catch it.
+
+    Falsifiable in the way it actually broke, which takes both halves: replace
+    the assignment below with a literal docstring -- correct on the day it is
+    typed -- and then, in a later and unrelated edit, pin one more surface. Only
+    then does the number stop matching, and it does. Pinning a surface while the
+    assignment is left alone passes, because the figure follows the list; a test
+    that failed on that too would be failing on the repair rather than on the
+    defect.
+    """
+    doc = test_pinned_surfaces_are_scanned.__doc__ or ""
+    assert f"{len(PINNED_SCOPE)} paths in PINNED_SCOPE" in doc, (
+        "test_pinned_surfaces_are_scanned's docstring no longer states the real "
+        f"size of PINNED_SCOPE ({len(PINNED_SCOPE)}). Its docstring is assigned "
+        "from an f-string precisely so this figure cannot go stale; do not write "
+        "the number by hand.\nThe docstring currently reads:\n" + doc
+    )
+    groups = (CORE_SCOPE, APP_SCOPE, CODE_SCOPE, PINNED_TEST_SCOPE,
+              UNREACHABLE_SCOPE)
+    assert len(PINNED_SCOPE) == sum(len(g) for g in groups), (
+        "PINNED_SCOPE is no longer the concatenation of its groups, so a whole "
+        "group can be dropped from the pinning without any test noticing."
+    )
+    assert len(set(PINNED_SCOPE)) == len(PINNED_SCOPE), (
+        f"PINNED_SCOPE contains a duplicate: {sorted(PINNED_SCOPE)}. A path "
+        "listed twice inflates the derived count and doubles its insertion "
+        "points in the ratchet measurement."
+    )
+
+
 def test_the_defect_record_stays_out_of_scope():
-    """The record files quote the retired sentences in order to retract them. If
-    they were ever pulled into SCOPE the guard would fail on its own evidence,
-    and the tempting fix would be to delete the evidence."""
+    """The record files -- and this one -- quote the retired sentences in order
+    to retract them. If they were ever pulled into SCOPE the guard would fail on
+    its own evidence, and the tempting fix would be to delete the evidence."""
     for relative in EXCLUDED_FILES:
-        assert relative not in SCOPE, f"{relative} is the defect record; it must stay excluded"
+        assert relative not in SCOPE, (
+            f"{relative} quotes the retired sentences in order to retract or to "
+            "specify them; it must stay excluded"
+        )
     assert not any(s.startswith("docs/decisions/") for s in SCOPE), (
         "docs/decisions/ supersede each other by quoting what they supersede"
     )

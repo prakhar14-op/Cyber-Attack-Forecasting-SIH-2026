@@ -175,9 +175,9 @@ which fails with a diagnosis rather than a stack trace when a prerequisite is mi
   classifier.
 - **The deployed engine is a single gradient-boosted model**, not the fused temporal-graph
   architecture the results table headlines. Engine-side fusion is roadmap, and the table says so.
-- **Two of the seven kill-chain stages have no data at all.** `lateral_movement` and
-  `exfiltration` have zero labelled windows in the public dataset, so we report no metric for them
-  rather than invent one.
+- **Three of the seven kill-chain stages have no data at all.** `recon`,
+  `lateral_movement` and `exfiltration` have zero labelled windows in the public dataset, so we
+  report no metric for them rather than invent one.
 
 If a command on this page does not do what it says, that is a defect and we want to know — it is
 the same class of defect our own audit was built to find.

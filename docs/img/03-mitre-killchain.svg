@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 360" width="1180" height="360"
+     font-family="'Segoe UI', Arial, Helvetica, sans-serif"
+     role="img" aria-labelledby="fig3-title fig3-desc">
+  <title id="fig3-title">The seven stage classes, their ATT&amp;CK techniques, and where the dataset has no labels</title>
+  <desc id="fig3-desc">Seven boxes left to right in the label-encoding order of configs/data.yaml:
+    benign, recon, initial_access, lateral_movement, c2, exfiltration, impact. Each names the
+    ATT and CK technique ids engine/technique_map.yaml can emit for that stage and the labelled
+    window counts per split. Zero-coverage stages (greyed out, dashed, and labelled NO LABELLED
+    WINDOWS): recon, lateral_movement, exfiltration. Those three have zero labelled windows in
+    CSE-CIC-IDS2018 across train, validation and test.</desc>
+
+  <!-- Coverage is encoded three ways — grey fill, dashed outline, and the words NO LABELLED
+       WINDOWS — so the gap survives greyscale printing and a washed-out projector. The
+       per-stage counts are also machine-readable in data-* attributes; tests/test_figures.py
+       checks them against the class table in docs/stage_mapping.md. -->
+  <rect width="1180" height="360" fill="#ffffff"/>
+
+  <defs>
+    <marker id="kc-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+            orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#0f3a5f"/>
+    </marker>
+  </defs>
+
+  <text x="20" y="26" data-claim="zero-coverage-headline" font-size="19" font-weight="700" fill="#0b2438">Figure 3 — Kill-chain stages, their ATT&amp;CK techniques, and the three-stage hole we do not hide</text>
+  <text x="20" y="48" font-size="12" fill="#333333">The 7 stage classes of configs/data.yaml in label-encoding order, with the technique ids engine/technique_map.yaml can emit for each.</text>
+
+  <g font-size="11" fill="#333333">
+    <rect x="898" y="36" width="20" height="12" rx="2" fill="#e4e4e4" stroke="#8c8c8c" stroke-width="1.6" stroke-dasharray="4 3"/>
+    <text x="924" y="46">zero labelled windows in CSE-CIC-IDS2018</text>
+  </g>
+
+  <!-- benign is class 0, not a step of the chain: divider, no progression arrow into recon -->
+  <path d="M 175 90 L 175 250" stroke="#999999" stroke-width="1.2" stroke-dasharray="3 3" fill="none"/>
+
+  <g data-stage="benign" data-coverage="labelled" data-train="2217799" data-val="1360972" data-test="1634866" data-labelled-windows="5213637">
+    <rect x="20" y="90" width="144" height="160" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="32" y="114" font-size="13" font-weight="700" fill="#0b2438" font-family="Consolas, 'Courier New', monospace">benign</text>
+    <text x="32" y="136" font-size="13" font-weight="700" fill="#0b2438">—</text>
+    <text x="32" y="151" font-size="9" fill="#2c4557">no technique: this is</text>
+    <text x="32" y="162" font-size="9" fill="#2c4557">class 0, not a chain step</text>
+    <path d="M 32 172 L 152 172" stroke="#0f3a5f" stroke-width="0.8" opacity="0.5"/>
+    <text x="32" y="188" font-size="9" fill="#2c4557">labelled host-windows</text>
+    <text x="32" y="202" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">train 2217799</text>
+    <text x="32" y="215" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">val   1360972</text>
+    <text x="32" y="228" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">test  1634866</text>
+    <text x="32" y="244" font-size="9" font-weight="700" fill="#0f3a5f">99.12 % OF ALL WINDOWS</text>
+  </g>
+
+  <g data-stage="recon" data-coverage="none" data-train="0" data-val="0" data-test="0" data-labelled-windows="0">
+    <rect x="186" y="90" width="144" height="160" rx="5" fill="#e4e4e4" stroke="#8c8c8c" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="198" y="114" font-size="13" font-weight="700" fill="#4a4a4a" font-family="Consolas, 'Courier New', monospace">recon</text>
+    <text x="198" y="136" font-size="13" font-weight="700" fill="#4a4a4a">T1046</text>
+    <text x="198" y="151" font-size="9" fill="#555555">Network Service Discovery</text>
+    <text x="198" y="162" font-size="9" fill="#555555">(scan / sequential sweep)</text>
+    <path d="M 198 172 L 318 172" stroke="#8c8c8c" stroke-width="0.8"/>
+    <text x="198" y="188" font-size="9" fill="#555555">labelled host-windows</text>
+    <text x="198" y="202" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">train 0</text>
+    <text x="198" y="215" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">val   0</text>
+    <text x="198" y="228" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">test  0</text>
+    <text x="198" y="244" font-size="9" font-weight="700" fill="#4a4a4a">NO LABELLED WINDOWS</text>
+  </g>
+
+  <path d="M 332 170 L 350 170" stroke="#0f3a5f" stroke-width="2" fill="none" marker-end="url(#kc-arrow)"/>
+
+  <g data-stage="initial_access" data-coverage="labelled" data-train="4463" data-val="0" data-test="0" data-labelled-windows="4463">
+    <rect x="352" y="90" width="144" height="160" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="364" y="114" font-size="12" font-weight="700" fill="#0b2438" font-family="Consolas, 'Courier New', monospace">initial_access</text>
+    <text x="364" y="136" font-size="13" font-weight="700" fill="#0b2438">T1110</text>
+    <text x="364" y="151" font-size="9" fill="#2c4557">Brute Force</text>
+    <text x="364" y="162" font-size="9" fill="#2c4557">(credential guessing)</text>
+    <path d="M 364 172 L 484 172" stroke="#0f3a5f" stroke-width="0.8" opacity="0.5"/>
+    <text x="364" y="188" font-size="9" fill="#2c4557">labelled host-windows</text>
+    <text x="364" y="202" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">train 4463</text>
+    <text x="364" y="215" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">val   0</text>
+    <text x="364" y="228" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">test  0</text>
+    <text x="364" y="244" font-size="9" font-weight="700" fill="#0f3a5f">TRAIN ONLY (FTP / SSH)</text>
+  </g>
+
+  <path d="M 498 170 L 516 170" stroke="#0f3a5f" stroke-width="2" fill="none" marker-end="url(#kc-arrow)"/>
+
+  <g data-stage="lateral_movement" data-coverage="none" data-train="0" data-val="0" data-test="0" data-labelled-windows="0">
+    <rect x="518" y="90" width="144" height="160" rx="5" fill="#e4e4e4" stroke="#8c8c8c" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="530" y="114" font-size="10.5" font-weight="700" fill="#4a4a4a" font-family="Consolas, 'Courier New', monospace">lateral_movement</text>
+    <text x="530" y="136" font-size="13" font-weight="700" fill="#4a4a4a">T1021 · T1046</text>
+    <text x="530" y="151" font-size="9" fill="#555555">Remote Services; internal</text>
+    <text x="530" y="162" font-size="9" fill="#555555">sweep stays Discovery</text>
+    <path d="M 530 172 L 650 172" stroke="#8c8c8c" stroke-width="0.8"/>
+    <text x="530" y="188" font-size="9" fill="#555555">labelled host-windows</text>
+    <text x="530" y="202" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">train 0</text>
+    <text x="530" y="215" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">val   0</text>
+    <text x="530" y="228" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">test  0</text>
+    <text x="530" y="244" font-size="9" font-weight="700" fill="#4a4a4a">NO LABELLED WINDOWS</text>
+  </g>
+
+  <path d="M 664 170 L 682 170" stroke="#0f3a5f" stroke-width="2" fill="none" marker-end="url(#kc-arrow)"/>
+
+  <g data-stage="c2" data-coverage="labelled" data-train="0" data-val="1953" data-test="38241" data-labelled-windows="40194">
+    <rect x="684" y="90" width="144" height="160" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="696" y="114" font-size="13" font-weight="700" fill="#0b2438" font-family="Consolas, 'Courier New', monospace">c2</text>
+    <text x="696" y="136" font-size="13" font-weight="700" fill="#0b2438">T1071</text>
+    <text x="696" y="151" font-size="9" fill="#2c4557">Application Layer Protocol</text>
+    <text x="696" y="162" font-size="9" fill="#2c4557">(no window rule emits it)</text>
+    <path d="M 696 172 L 816 172" stroke="#0f3a5f" stroke-width="0.8" opacity="0.5"/>
+    <text x="696" y="188" font-size="9" fill="#2c4557">labelled host-windows</text>
+    <text x="696" y="202" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">train 0</text>
+    <text x="696" y="215" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">val   1953</text>
+    <text x="696" y="228" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">test  38241</text>
+    <text x="696" y="244" font-size="9" font-weight="700" fill="#0f3a5f">NO TRAINING SIGNAL</text>
+  </g>
+
+  <path d="M 830 170 L 848 170" stroke="#0f3a5f" stroke-width="2" fill="none" marker-end="url(#kc-arrow)"/>
+
+  <g data-stage="exfiltration" data-coverage="none" data-train="0" data-val="0" data-test="0" data-labelled-windows="0">
+    <rect x="850" y="90" width="144" height="160" rx="5" fill="#e4e4e4" stroke="#8c8c8c" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="862" y="114" font-size="11.5" font-weight="700" fill="#4a4a4a" font-family="Consolas, 'Courier New', monospace">exfiltration</text>
+    <text x="862" y="136" font-size="13" font-weight="700" fill="#4a4a4a">T1041 · T1048</text>
+    <text x="862" y="151" font-size="9" fill="#555555">Over C2 Channel; bulk</text>
+    <text x="862" y="162" font-size="9" fill="#555555">egress = Alt Protocol</text>
+    <path d="M 862 172 L 982 172" stroke="#8c8c8c" stroke-width="0.8"/>
+    <text x="862" y="188" font-size="9" fill="#555555">labelled host-windows</text>
+    <text x="862" y="202" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">train 0</text>
+    <text x="862" y="215" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">val   0</text>
+    <text x="862" y="228" font-size="9.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">test  0</text>
+    <text x="862" y="244" font-size="9" font-weight="700" fill="#4a4a4a">NO LABELLED WINDOWS</text>
+  </g>
+
+  <path d="M 996 170 L 1014 170" stroke="#0f3a5f" stroke-width="2" fill="none" marker-end="url(#kc-arrow)"/>
+
+  <g data-stage="impact" data-coverage="labelled" data-train="1681" data-val="0" data-test="0" data-labelled-windows="1681">
+    <rect x="1016" y="90" width="144" height="160" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="1028" y="114" font-size="13" font-weight="700" fill="#0b2438" font-family="Consolas, 'Courier New', monospace">impact</text>
+    <text x="1028" y="136" font-size="13" font-weight="700" fill="#0b2438">T1498</text>
+    <text x="1028" y="151" font-size="9" fill="#2c4557">Network Denial of Service</text>
+    <text x="1028" y="162" font-size="9" fill="#2c4557">(Hulk / SlowHTTPTest)</text>
+    <path d="M 1028 172 L 1148 172" stroke="#0f3a5f" stroke-width="0.8" opacity="0.5"/>
+    <text x="1028" y="188" font-size="9" fill="#2c4557">labelled host-windows</text>
+    <text x="1028" y="202" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">train 1681</text>
+    <text x="1028" y="215" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">val   0</text>
+    <text x="1028" y="228" font-size="9.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">test  0</text>
+    <text x="1028" y="244" font-size="9" font-weight="700" fill="#0f3a5f">TRAIN ONLY (DoS)</text>
+  </g>
+
+  <g font-size="11" fill="#333333">
+    <g data-claim="zero-coverage-footnote">
+      <text x="20" y="278"><tspan font-weight="700">Greyed out on purpose.</tspan> recon, lateral_movement and exfiltration have zero labelled windows in CSE-CIC-IDS2018 across train, val and test (class table, docs/stage_mapping.md). Their rules and</text>
+      <text x="20" y="295">technique mappings are implemented and unit-tested, but no per-class metric is reported for them — a printed number would be invented. The M11 lab capture is the only path to that signal.</text>
+    </g>
+    <text x="20" y="312">Two more holes are visible rather than smoothed over: c2 has no training windows, and initial_access / impact have none in val or test. With four attack days the day-wise splits are</text>
+    <text x="20" y="329">attack-family-disjoint by construction, which is why the headline is a cross-family generalisation test and why the stage head is not presented as a validated 7-class classifier.</text>
+    <text x="20" y="346">Left to right is the label encoding of configs/data.yaml, not a claim about attack ordering. tests/test_figures.py fails if a stage, technique id or count here drifts from its source file.</text>
+  </g>
+</svg>

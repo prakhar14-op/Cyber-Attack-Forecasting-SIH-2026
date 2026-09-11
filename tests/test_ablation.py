@@ -329,7 +329,7 @@ def test_val_table_excludes_results_carrying_no_val_block(tmp_path):
 
 # eval/plots.py renders the SHIPPED PNG, so its refusals matter as much as the
 # table's: a quartile band drawn over 2 episodes is a picture of a dispersion
-# nobody measured. These tests run main() against a synthetic results dir and
+# nobody measured. These tests build the figure from a synthetic results dir and
 # inspect the axes matplotlib actually built.
 
 def _forecast_json(tmp_path, *, n_episodes, per_episode, band=(50.0, 150.0)):
@@ -349,31 +349,66 @@ def _forecast_json(tmp_path, *, n_episodes, per_episode, band=(50.0, 150.0)):
         json.dumps({"horizons": horizons}), encoding="utf-8")
 
 
-def _render(monkeypatch, tmp_path, cfg_eval=None):
-    """Run eval.plots.main() into tmp_path; return its lead-time axis."""
+def _render(tmp_path, cfg_eval=None):
+    """Render the lead-time figure from tmp_path/forecast.json; return its axis.
+
+    Calls `plots.build_figure` rather than `main`, so the figure under test is
+    the object this function was handed — no lookup through pyplot's global
+    figure registry, which would be reading whatever the last renderer left open.
+
+    The figure is closed before the axis is returned, for the same reason
+    `main` closes its own: `build_figure` goes through pyplot, so an unclosed
+    one would sit in the registry for the rest of the session and a test file
+    that complains about leaked figures must not leak its own. Closing detaches
+    the figure from pyplot's manager; the Axes object stays intact and every
+    assertion below still reads the marks matplotlib drew on it.
+    """
     import matplotlib.pyplot as plt
 
     from eval import plots
 
+    fc = json.loads((tmp_path / "forecast.json").read_text(encoding="utf-8"))
+    fig = plots.build_figure(fc, cfg_eval or load_config("eval"), tmp_path)
+    ax = fig.axes[0]
+    plt.close(fig)
+    return ax
+
+
+def test_plot_main_writes_the_png_and_leaves_no_figure_open(monkeypatch, tmp_path):
+    """pyplot owns every figure until someone closes it.
+
+    `main` is the CLI entry point but also a function anything may call in a
+    loop (the ablation script renders after a re-run). A figure it never closes
+    stays alive in pyplot's registry for the life of the process, and the only
+    reason the tests above could find their output was that leak. Asserting the
+    registry is empty AFTER a successful render is what makes this falsifiable:
+    drop the `plt.close(fig)` in eval/plots.main and this fails.
+    """
+    import matplotlib.pyplot as plt
+
+    from eval import plots
+
+    _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0])
     monkeypatch.setattr(plots, "resolve_path", lambda *a, **k: tmp_path)
-    if cfg_eval is not None:
-        real = load_config
-        monkeypatch.setattr(
-            plots, "load_config",
-            lambda name: cfg_eval if name == "eval" else real(name))
     plt.close("all")
-    assert plots.main() == 0
-    fig = plt.figure(plt.get_fignums()[-1])
-    return fig.axes[0]
+
+    # Twice, because the claim being pinned is "one leaked figure PER CALL":
+    # a single call leaking one is the same assertion, but a renderer used in a
+    # loop is the case that actually accumulates them.
+    for _ in range(2):
+        assert plots.main() == 0
+    assert (tmp_path / "lead_time.png").exists()
+    assert plt.get_fignums() == [], (
+        f"eval.plots.main left {len(plt.get_fignums())} figure(s) open in "
+        "pyplot's global registry after 2 calls — one leaked figure per call")
 
 
-def test_plot_omits_the_band_below_the_episode_cutoff_and_draws_each_episode(
-        monkeypatch, tmp_path):
+def test_plot_omits_the_band_below_the_episode_cutoff_and_draws_each_episode(tmp_path):
     cutoff = int(load_config("eval")["metrics"]["min_episodes_for_quantile_band"])
     assert cutoff > 2, "the shipped runs have 2 episodes; a cutoff of 2 pins nothing"
 
     _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0])
-    ax = _render(monkeypatch, tmp_path)
+    ax = _render(tmp_path)
 
     assert not ax.collections, (
         "fill_between drew an IQR band over 2 episodes — half of that band is a "
@@ -385,21 +420,19 @@ def test_plot_omits_the_band_below_the_episode_cutoff_and_draws_each_episode(
     assert "IQR omitted" in note and f"{cutoff}-episode cutoff" in note
 
 
-def test_plot_draws_the_band_once_the_episode_count_clears_the_cutoff(
-        monkeypatch, tmp_path):
+def test_plot_draws_the_band_once_the_episode_count_clears_the_cutoff(tmp_path):
     cutoff = int(load_config("eval")["metrics"]["min_episodes_for_quantile_band"])
     _forecast_json(tmp_path, n_episodes=cutoff, per_episode=[10.0] * cutoff)
-    ax = _render(monkeypatch, tmp_path)
+    ax = _render(tmp_path)
 
     assert len(ax.collections) == 1, "the band must be drawn once n >= the cutoff"
     assert not [line for line in ax.lines if line.get_marker() == "x"]
     assert not ax.texts
 
 
-def test_plot_omits_the_band_when_the_results_json_never_recorded_the_count(
-        monkeypatch, tmp_path):
+def test_plot_omits_the_band_when_the_results_json_never_recorded_the_count(tmp_path):
     _forecast_json(tmp_path, n_episodes=None, per_episode=None)
-    ax = _render(monkeypatch, tmp_path)
+    ax = _render(tmp_path)
 
     assert not ax.collections
     note = " ".join(t.get_text() for t in ax.texts)
@@ -407,7 +440,7 @@ def test_plot_omits_the_band_when_the_results_json_never_recorded_the_count(
     assert "per-episode values absent" in note
 
 
-def test_plot_title_states_the_configured_undetected_convention(monkeypatch, tmp_path):
+def test_plot_title_states_the_configured_undetected_convention(tmp_path):
     """The '(undetected = 0)' in the title is `lead_time_undetected_seconds`.
 
     It is what every median on that axis charges a missed episode, and it is a
@@ -415,13 +448,13 @@ def test_plot_title_states_the_configured_undetected_convention(monkeypatch, tmp
     """
     shipped = load_config("eval")
     _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0])
-    ax = _render(monkeypatch, tmp_path)
+    ax = _render(tmp_path)
     undetected = float(shipped["metrics"]["lead_time_undetected_seconds"])
     assert ax.get_title() == f"Lead time vs horizon (undetected = {undetected:g} s)"
 
     changed = copy.deepcopy(shipped)
     changed["metrics"]["lead_time_undetected_seconds"] = -1
-    ax = _render(monkeypatch, tmp_path, cfg_eval=changed)
+    ax = _render(tmp_path, cfg_eval=changed)
     assert ax.get_title() == "Lead time vs horizon (undetected = -1 s)", (
         "the title is hardcoded again — it would print '0' for a run that "
         "charged something else")

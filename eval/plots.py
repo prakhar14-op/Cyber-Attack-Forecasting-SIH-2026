@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import matplotlib
 
@@ -26,19 +27,17 @@ import matplotlib.pyplot as plt
 from configs import load_config, resolve_path
 
 
-def main() -> int:
-    cfg_eval = load_config("eval")
-    results_dir = resolve_path(cfg_eval["paths"]["results_dir"])
-    plots_dir = resolve_path(cfg_eval["paths"]["plots_dir"])
-    plots_dir.mkdir(parents=True, exist_ok=True)
+def build_figure(fc: dict, cfg_eval: dict, results_dir: Path):
+    """The lead-time figure for one forecast result, as a Figure the caller owns.
 
-    fc_path = results_dir / "forecast.json"
-    if not fc_path.exists():
-        print("results/forecast.json missing — run `python -m eval.harness --model forecast`",
-              file=sys.stderr)
-        return 1
-    fc = json.loads(fc_path.read_text(encoding="utf-8"))
+    Separate from `main` so the figure has an owner: pyplot keeps every figure it
+    creates alive until someone closes it, and a renderer that only ever saves
+    leaks one per call (and forces a test to find its own output through pyplot's
+    global registry). `main` closes what this returns.
 
+    `results_dir` is read for the horizon-0 baseline JSONs drawn as reference
+    lines; `fc` is the already-parsed forecast result.
+    """
     budget = "fpr_0.01"
     min_episodes = int(cfg_eval["metrics"]["min_episodes_for_quantile_band"])
     ks, lead, lo, hi, auroc = [], [], [], [], []
@@ -116,8 +115,31 @@ def main() -> int:
     ax2.set_title("Ranking holds when forecasting ahead")
     ax2.set_ylim(0.5, 1.0); ax2.grid(alpha=0.3)
 
+    fig.tight_layout()
+    return fig
+
+
+def main() -> int:
+    cfg_eval = load_config("eval")
+    results_dir = resolve_path(cfg_eval["paths"]["results_dir"])
+    plots_dir = resolve_path(cfg_eval["paths"]["plots_dir"])
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    fc_path = results_dir / "forecast.json"
+    if not fc_path.exists():
+        print("results/forecast.json missing — run `python -m eval.harness --model forecast`",
+              file=sys.stderr)
+        return 1
+    fc = json.loads(fc_path.read_text(encoding="utf-8"))
+
+    fig = build_figure(fc, cfg_eval, results_dir)
     out = plots_dir / "lead_time.png"
-    fig.tight_layout(); fig.savefig(out, dpi=150)
+    try:
+        fig.savefig(out, dpi=150)
+    finally:
+        # pyplot holds a reference until the figure is closed; a harness that
+        # renders in a loop would accumulate them.
+        plt.close(fig)
     print(f"-> {out}")
     return 0
 
