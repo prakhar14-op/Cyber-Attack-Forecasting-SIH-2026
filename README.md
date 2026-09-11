@@ -77,9 +77,16 @@ runs are now **bit-identical**, so these numbers are reproducible rather than si
 | tgn_graft_t2v_clamped | 0.014 | 0.024 | 0.01 | 0.38 | 0.023 | 30.0 | 15-45 | 1/2 | 156.9 |
 
 Reading: the shipped headline is the **fused model** (rank-mean of the TGN encoder and
-XGBoost, parameter-free, nothing fitted on val/test for the ranking): AUROC **0.933**, both
-attack episodes caught (**median ~70 min**, per-episode ~49 min and ~91 min before completion),
-and the best **validation** AUROC of any row — it is selected on val, never on test. The
+XGBoost): AUROC **0.933**, both attack episodes caught (**median ~70 min**, per-episode ~49 min
+and ~91 min before completion). It is selected for **test-set ranking quality and error
+decorrelation** — *not* on a validation criterion: on best **validation** AUROC the winner would
+be **xgb** (0.806) over **fused** (0.765), and fused has the largest val→test gap of any row.
+Two open integrity defects travel with this row, disclosed rather than papered over: the rank
+transform is **fitted on the split it scores** (transductive — the operating point is not
+computable online; a causal refit leaves AUROC ≈ 0.930 but drops F1 to ≈ 0.053), and at this
+alert budget **lead time does not separate from a matched-budget random baseline**
+(4,882–5,110 s, 2/2 episodes). Both are tracked in
+[tier1_hardening_report.md](tier1_hardening_report.md). The
 **class-weighted logistic regression** (the PS-graded baseline) stays near-random cross-family
 (0.573). The fusion is the point: its members' errors are nearly uncorrelated, so when the
 determinism fix cost the TGN encoder 0.037 AUROC the **fused headline moved only −0.009**

@@ -5,11 +5,18 @@
 Design decision, made a priori (not tuned on test): the temporal-graph encoder
 (TGN) and the static gradient-boosted baseline (XGBoost) look at the same
 30-feature window matrix through different lenses, and their errors are nearly
-uncorrelated (Spearman rho ~0.11 on test). Rank-mean fusion is parameter-free —
-each model's scores are converted to within-split percentiles and averaged — so
-nothing is fitted on val or test for the ranking. Ranks are scale-free, which
-also makes the FPR-budget threshold transfer across days far better than raw
-scores do.
+uncorrelated (Spearman rho = 0.05 on test). Each model's scores are converted to
+within-split percentiles and averaged; no weights are fitted between the members.
+
+KNOWN DEFECT (tier1_hardening_report.md, defect 3): converting *within the split
+being scored* makes the transform TRANSDUCTIVE — a window's rank depends on
+windows that arrive later in the same split, so this operating point cannot be
+computed online at time t, and the apparent quality of the val->test threshold
+transfer is an artifact of ranking each split against its own empirical CDF.
+AUROC is invariant to any monotonic per-split transform and so is unaffected
+(0.933), but under a causal refit (member ECDFs fitted on val only, applied
+pointwise) the fused F1 drops 0.172 -> 0.053. The fix is to fit on val only;
+until then every fused operating-point number carries this caveat.
 
 For a calibrated PROBABILITY output (ECE), the fused rank is passed through an
 isotonic regressor fitted on VAL only; isotonic is monotonic, so it cannot

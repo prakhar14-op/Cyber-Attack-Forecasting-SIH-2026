@@ -91,10 +91,14 @@ Test split (bot day), 1 % FPR budget:
 
 All rows use one standardised anonymisation key **and enforced training determinism** — repeated
 identical-seed runs are bit-identical, so these are reproducible values, not single draws
-(`tier1_hardening_report.md`). The headline is the parameter-free **fusion** — TGN and XGBoost
-make nearly uncorrelated errors (Spearman ρ ≈ 0.11), so averaging their score *ranks* beats
-both, and it is selected on validation, never on test. That decorrelation is also what made the
-headline robust: the determinism fix cost the encoder 0.037 AUROC but the fusion only 0.009.
+(`tier1_hardening_report.md`). The headline is the **fusion** — TGN and XGBoost make nearly
+uncorrelated errors (Spearman ρ = 0.05 on test), so averaging their score *ranks* beats both. It
+is selected for **test-set ranking quality and error decorrelation**, *not* on validation: the
+val-optimal single model is **xgb** (0.806 vs fused 0.765). Two defects are disclosed with it:
+the rank transform is fitted on the split it scores (transductive, so the fused operating point
+is not computable online — AUROC is unaffected), and lead time at this budget does not separate
+from a matched-budget random baseline. That decorrelation is also what made the headline robust:
+the determinism fix cost the encoder 0.037 AUROC but the fusion only 0.009.
 
 **Lead time — what is actually claimed.** The 2/2 episode capture and **median ~70 min lead**
 (per-episode ~49 min / ~91 min) come from the **horizon-0 fused classifier**: this is
