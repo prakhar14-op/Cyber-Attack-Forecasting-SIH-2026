@@ -86,11 +86,19 @@ multiplicity that inflates AUROC/F1 — is in
   model, including the graded LR baseline, is trained and scored on our own matrix, which is
   what makes the comparison fair.
 - **Overlapping windows shorten the effective horizon**: 15 s windows on a 5 s stride mean
-  window *t* and *t+3* are the first fully-disjoint pair, so k=1 and k=2 are near-nowcasts;
-  k=4 and k=8 are the honest forecasting horizons.
-- **At k=8 the operating point degrades**: the ranking holds (AUROC 0.890) but the val-fitted
-  threshold stops transferring and episode detection drops to 0/2. 20 s ahead is our supported
-  forecast horizon; 40 s is where it currently breaks.
+  window *t* and *t+3* are the first fully-disjoint pair, so k=1 and k=2 are near-nowcasts and
+  only k=4 and k=8 are structurally ahead of the present. Even there the *label* being predicted
+  is 93.5 % (k=4) and 93.1 % (k=8) identical to the nowcast label, so a model that simply scores
+  the present well already scores most of the k-step target correctly.
+- **There is no supported forward-forecast horizon.** The k-step head has a ranking signal at
+  every horizon we report (test AUROC 0.844 at k=4, 0.842 at k=8 — better than chance), but at
+  the 1 % FPR budget its operating point collapses to F1 ≤ 0.009 and **0/2 episodes at k=1, 4
+  and 8 alike**, and the oracle-threshold analysis shows no threshold recovers it — a ranking
+  limit, not a calibration bug. Earlier drafts claimed "20 s ahead is our supported horizon"
+  against a stale AUROC of 0.890; both are retracted (`tier1_hardening_report.md`). The early
+  warning this system does claim comes from the **horizon-0** classifier, not from forecasting
+  ahead. One further caveat on the ranking figure itself: the k-step target is **93–96 %
+  identical to the nowcast target**, so ranking it well is close to ranking the present well.
 - **The dataset has known label errors** (Liu et al. 2022); we deliberately do not chase the
   last fraction of F1.
 - **The ledger is tamper-evident, not a distributed blockchain.** Hash chain + Merkle roots +

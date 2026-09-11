@@ -100,6 +100,7 @@ A test fails the build if an explanation returns an index instead of a feature n
    (0.683 → 0.851 AUROC) but still 0/2. We ship the encoder that works and publish the RSSM as a
    **negative result with its recipe**.
 
-*Also: benign traffic is subsampled, so alerts/day is a within-sample rate; k=8 degrades at the
-operating point (20 s is our supported horizon); the ledger is tamper-evident, not a distributed
-blockchain — deliberately, so the demo runs air-gapped.*
+*Also: benign traffic is subsampled, so alerts/day is a within-sample rate; the k-step head has
+**no usable operating point at any horizon** (0/2 episodes at k=1/4/8 — ranking signal only),
+and its target is 93–96 % identical to the nowcast target; the ledger is tamper-evident, not a
+distributed blockchain — deliberately, so the demo runs air-gapped.*

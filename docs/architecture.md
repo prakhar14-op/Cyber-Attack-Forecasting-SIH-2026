@@ -53,9 +53,10 @@ recorded as a negative result (`docs/decisions/004`, `docs/limitations.md` §4).
 `engine/predict.py` runs fully offline from persisted artefacts: it builds features from the
 input file, scores each host-window against a threshold **fitted from an FPR budget on
 validation** (never a literal), and for each alert emits a JSON-schema-validated object.
-The deployed scorer is the cascade's **fast tier** (XGBoost — CPU-cheap and natively
-TreeSHAP-explainable); the fused TGN+XGB headline in §4 is the eval-side model, and
-engine-side fusion is roadmap. Each alert object carries:
+The deployed scorer is a **single XGBoost model** (CPU-cheap and natively TreeSHAP-explainable)
+— one of two variants selected by input format, not a cascade: the full 30-feature model for
+PCAP, a flow-only model for CSV. The fused TGN+XGB headline in §4 is the **eval-side** model and
+does not run in the engine; engine-side fusion is roadmap. Each alert object carries:
 probability, stage, MITRE technique, top-5 **named** features, the top-3 contributing windows
 (where the attack was forming), and the flagged flows in that window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
 statement rules out black-box output, so explanations name `payload_hist_0` or
