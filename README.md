@@ -42,7 +42,7 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 | M9 audit ledger | done (`m9-ledger`) — hash chain + Merkle, HMAC pseudonyms, checkpoint anchoring, offline verify CLI, weight-SHA-256 refusal |
 | M10 offline app | done (`m10-app`) — Streamlit demo: upload → timeline → named-feature explanations → what-if → ledger verify/tamper → results card; telemetry disabled |
 | M11 lab capture | kit ready (capture.sh, scenarios, label_capture, consent); real capture needs hardware — **untagged**. A bundled *synthetic* demo PCAP stands in for the app |
-| M12 deliverables | docs done (architecture **+ 2-page PDF**, limitations, demo script, 5 slides, weight digests); **clean-machine offline install verified** (wheelhouse incl. plotly) — outstanding: record the 2-min video, publish the weights Release + PR (needs GitHub auth), M11 capture |
+| M12 deliverables | in progress. Done: architecture doc **+ 2-page PDF**, limitations, threat model, deployment, competitive positioning, dataset quality, roadmap, demo script, 5-slide content, weight digests, [docs/INSTALL.md](docs/INSTALL.md), CI. Outstanding: **the 2-minute video** (unrecorded), **the weights Release** (not published, so a fresh clone cannot run the demo or un-skip the end-to-end tests), the **architecture image in this README** (BUILD_PLAN 12.1 acceptance criterion, unshipped), a built `.pptx` deck, and M11 capture. The offline wheel-house install was verified once on a machine with a populated `vendor/`; the wheels are gitignored, so **a fresh clone must use the online install path** |
 
 ## Read this first
 
@@ -50,6 +50,22 @@ Milestone-gated build (see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md)). Current: *
 - [docs/architecture.md](docs/architecture.md) — 2-page design
 - [docs/benchmark_protocol.md](docs/benchmark_protocol.md) — how every number is produced
 - [docs/decisions/](docs/decisions/) — the decision log, including the world model that failed
+- [tier1_hardening_report.md](tier1_hardening_report.md) — our own adversarial audit of these
+  results, including the defects it found in claims we had already published
+
+If you are evaluating this system rather than building on it, these five answer the questions a
+reviewer usually has to dig for:
+
+- [docs/threat_model.md](docs/threat_model.md) — what an *adaptive* attacker can defeat here,
+  with the cost of each evasion measured rather than asserted
+- [docs/deployment.md](docs/deployment.md) — where the sensor sits, what hardware it needs, and
+  the alert volume a real network would see (the ~450-host multiplication, done openly)
+- [docs/competitive.md](docs/competitive.md) — why this is not simply Suricata, and why the
+  ~99 % figures published on this dataset are not the same claim as ours
+- [docs/dataset_quality.md](docs/dataset_quality.md) — the known defects in CSE-CIC-IDS-2018,
+  which of them reach this pipeline, and the labelling risk that is ours alone
+- [docs/roadmap.md](docs/roadmap.md) — what is shipped, what is next, and what is deliberately
+  out of scope
 
 ## Results
 
@@ -75,6 +91,42 @@ runs are now **bit-identical**, so these numbers are reproducible rather than si
 | tgn_graft_no_time2vec | 0.013 | 0.023 | 0.009 | 0.701 | 0.023 | 1035.0 | 935-1135 | 2/2 | 161.3 |
 | lr | 0.001 | 0.002 | 0.001 | 0.573 | 0.026 | 0.0 | 0-0 | 0/2 | 112.3 |
 | tgn_graft_t2v_clamped | 0.014 | 0.024 | 0.01 | 0.38 | 0.023 | 30.0 | 15-45 | 1/2 | 156.9 |
+
+> **This table's schema is one revision behind the renderer.** The rows above are the output of
+> `eval/ablation.py` *as it stood when `results/` was last generated*, and they will change shape
+> — not value — on the next regeneration. Two columns are affected, and both matter when reading
+> the numbers:
+>
+> - **`lead_IQR_s` is retired.** With n = 2 episodes an "IQR" is pure interpolation between two
+>   points, so it carries no dispersion information. Worse, on the two rows showing **1/2**
+>   episodes (`tgn`, `tgn_graft_t2v_clamped`) the undetected episode enters as a 0 s value, so
+>   half of that printed band is a *miss* rendered as if it were a spread. The renderer now
+>   suppresses the band below `metrics.min_episodes_for_quantile_band` (configs/eval.yaml) and
+>   prints the literal per-episode lead values instead. **Read the `episodes` column first.**
+> - **An achieved-FPR column is being added.** Every row is drawn at a *1 % budget*, but the FPR
+>   each row actually achieves spans 3.2×: tgn **0.373 %**, lr 0.663 %, fused 0.811 %,
+>   lstm 0.836 %, tgn_graft 0.933 %, xgb **1.194 %** (measured in
+>   [tier1_hardening_report.md](tier1_hardening_report.md)). Rows compared on F1 are therefore
+>   not being compared at equal alert budgets.
+>
+> These figures are quoted here from the report that measured them rather than pasted into the
+> table, because the table is script-generated and is never hand-edited.
+
+**The population these numbers are measured over.** Read this before reading the table:
+
+- **2 attack episodes**, and both are sessions of the *same* attacker host
+  (`18.219.211.138`, `data/attack_timeline.yaml`). "2/2" is therefore a count, not a rate: the
+  exact 95 % confidence interval for 2 successes out of 2 is **[0.158, 1.000]**. Nothing in the
+  episode column can distinguish a good detector from a lucky one at this sample size.
+- **Benign hosts are subsampled** — `benign_hosts_per_day: 30` (`configs/data.yaml`, seed 1337,
+  [decision 001](docs/decisions/001-feature-source.md)) out of a testbed of roughly 450. The
+  attack/benign ratio in our evaluation is therefore far richer than a real network's, which
+  **inflates precision and F1** relative to a full-network deployment. AUROC and lead time are
+  much less affected; the alerts/host/day column is a within-sample rate, and
+  [docs/deployment.md](docs/deployment.md) does the network-wide multiplication openly.
+- **One day, one attack family per split.** Test is the 02-03 bot day only. That is what makes
+  this a cross-family generalisation test, and also what makes per-class stage metrics
+  untrainable ([docs/limitations.md](docs/limitations.md)).
 
 Reading: the shipped headline is the **fused model** (rank-mean of the TGN encoder and
 XGBoost): AUROC **0.933**, both attack episodes caught (**median ~70 min**, per-episode ~49 min
@@ -103,22 +155,32 @@ full 30 features, CSV → flow-only), not a cascade. The fused row above is an *
 that does not run in the engine; it is regenerated by `scripts/make_ablation_table.py`.
 Engine-side fusion is roadmap.
 
-## Offline setup
+## Setup
 
-The demo, inference and ledger verification run with **no network**. Install from the
-local wheel-house (built once, on a connected machine, with `scripts/build_vendor.ps1`):
+Full instructions, both install paths, the preflight check and the Windows path-length caveat
+are in **[docs/INSTALL.md](docs/INSTALL.md)**. The short version:
 
 ```
 python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+```
+
+For the air-gapped demo machine, install from the local wheel-house instead (built once on a
+connected machine with `scripts/build_vendor.ps1`; the wheels themselves are gitignored, so a
+fresh clone has an empty `vendor/` and must use the online path above):
+
+```
 .venv\Scripts\pip install --no-index --find-links vendor -r requirements.txt
 ```
 
-> **Windows path-length caveat:** install into a venv at a **short path** (e.g.
-> `C:\sih26\.venv`) or enable Windows long-path support first — torch's include tree
-> nests deep enough to breach the 260-char MAX_PATH from a long directory, and pip
-> then fails mid-extract with `[Errno 2] ... epilogue_rescale_output.h`.
+**Two environment variables are mandatory and have no defaults** — see
+[.env.example](.env.example). `SIH26_HMAC_KEY` keys the node-identity pseudonyms, and every
+published number is measured under one standardised value, so a different key makes results
+incomparable rather than wrong. `SIH26_LEDGER_KEY` keys the ledger pseudonyms and checkpoint
+signatures. Both refuse to fall back to a built-in default: a default published in open source
+would reverse every pseudonym over this dataset's ~15 fixed attacker addresses.
 
-Bootstrap the artifacts once, then verify offline (no network at any step):
+Bootstrap the artifacts once, then verify:
 
 ```
 python -m engine.train_engine                 # fit + persist model, threshold, weight digests
@@ -128,13 +190,19 @@ streamlit run app/streamlit_app.py          # the offline demo
 pytest tests/ -q                             # and: python -m tests.smoke
 ```
 
-`pytest tests/ -q` and `python -m tests.smoke` both run with sockets blocked. The unit tests
-pass on a bare checkout; the **end-to-end** offline/smoke tests and the scaler-refit test need
-the trained artifacts (and, for the scaler test, the extracted dataset), so run
-`python -m engine.train_engine` first — until then those tests **skip with a bootstrap hint**
-rather than fail (the artifacts are gitignored — CLAUDE.md forbids committing weights). With the
-artifacts present, **all 7 required tests pass** and the smoke run does 1,000 flows → forecasts
-→ ledger → offline verification in ~9 s.
+**What "offline" means here, precisely.** `python -m tests.smoke` runs its whole pipeline inside
+a socket kill-switch (`tests/net_guard.py`), and `tests/test_offline.py` asserts that inference
+and ledger verification complete with every socket primitive raising. The rest of the suite does
+**not** run under that guard — `no_network` is an opt-in fixture, not an autouse one — so the
+offline claim is enforced by those specific tests rather than by the suite as a whole. The demo
+itself makes no network calls: charts render server-side and Streamlit serves its own assets.
+
+On a bare checkout the unit tests pass and the end-to-end tests **skip with a bootstrap hint**
+rather than fail, because the trained artifacts are gitignored (CLAUDE.md forbids committing
+weights) and the scaler test additionally needs the extracted dataset.
+`tests/test_bootstrap_state.py` prints exactly which guarantees are currently verified and which
+are unverified-because-unbootstrapped, so the gap is disclosed rather than silent. Read the pass
+and skip counts off your own run; do not trust a count written in a document.
 
 ## Layout
 
