@@ -105,6 +105,7 @@ def evaluate_fused(members: tuple[str, ...] = MEMBERS, name: str | None = None) 
                 "n_alerts": tp + fp,
                 "alerts_per_host_day": M.alerts_per_host_day(tp + fp, len(y[s]), cfg),
                 "lead_time_median": lt.median, "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
+                "per_episode_seconds": list(lt.per_episode_seconds),
                 "episodes_detected": lt.n_detected, "episodes_total": lt.n_episodes,
             }
     for s in ("val", "test"):

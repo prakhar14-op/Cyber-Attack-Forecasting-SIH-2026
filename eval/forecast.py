@@ -127,6 +127,7 @@ def evaluate_forecast() -> dict:
                 "threshold": thr, "precision": precision, "recall": recall, "f1": f1,
                 "fpr": fp / (fp + tn) if (fp + tn) else 0.0,
                 "lead_time_median": lt.median, "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
+                "per_episode_seconds": list(lt.per_episode_seconds),
                 "episodes_detected": lt.n_detected, "episodes_total": lt.n_episodes,
                 "alerts_per_host_day": M.alerts_per_host_day(tp + fp, tk.n_host_windows, cfg),
             }

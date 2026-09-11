@@ -278,6 +278,7 @@ def evaluate_world(rssm_config: str = "train_rssm") -> dict:
                     "f1": f1, "fpr": fp / (fp + tn) if (fp + tn) else 0.0,
                     "lead_time_median": lt.median,
                     "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
+                    "per_episode_seconds": list(lt.per_episode_seconds),
                     "episodes_detected": lt.n_detected,
                     "episodes_total": lt.n_episodes,
                 }
