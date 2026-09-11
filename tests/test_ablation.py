@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -332,36 +333,42 @@ def test_val_table_excludes_results_carrying_no_val_block(tmp_path):
 # nobody measured. These tests build the figure from a synthetic results dir and
 # inspect the axes matplotlib actually built.
 
-def _forecast_json(tmp_path, *, n_episodes, per_episode, band=(50.0, 150.0)):
-    horizons = {
-        str(k): {
-            "auroc_test": 0.9,
-            "fpr_0.01": {
-                "lead_time_median": 100.0 - 10.0 * k,
-                "lead_time_iqr": list(band) if band else None,
-                "episodes_total": n_episodes,
-                "per_episode_seconds": per_episode,
-            },
+def _forecast_json(tmp_path, *, n_episodes, per_episode, band=(50.0, 150.0),
+                   n_detected=None):
+    """A forecast results file. `n_detected=None` omits the key, as an older
+    writer's file would; every shipped writer emits it (eval/forecast.py)."""
+    def point(k):
+        pt = {
+            "lead_time_median": 100.0 - 10.0 * k,
+            "lead_time_iqr": list(band) if band else None,
+            "episodes_total": n_episodes,
+            "per_episode_seconds": per_episode,
         }
+        if n_detected is not None:
+            pt["episodes_detected"] = n_detected
+        return pt
+
+    horizons = {
+        str(k): {"auroc_test": 0.9, "fpr_0.01": point(k)}
         for k in (1, 4, 8)
     }
     (tmp_path / "forecast.json").write_text(
         json.dumps({"horizons": horizons}), encoding="utf-8")
 
 
-def _render(tmp_path, cfg_eval=None):
-    """Render the lead-time figure from tmp_path/forecast.json; return its axis.
+def _render_figure(tmp_path, cfg_eval=None):
+    """The whole figure from tmp_path/forecast.json: both axes, as a judge sees it.
 
     Calls `plots.build_figure` rather than `main`, so the figure under test is
-    the object this function was handed — no lookup through pyplot's global
+    the object this function was handed - no lookup through pyplot's global
     figure registry, which would be reading whatever the last renderer left open.
 
-    The figure is closed before the axis is returned, for the same reason
-    `main` closes its own: `build_figure` goes through pyplot, so an unclosed
-    one would sit in the registry for the rest of the session and a test file
-    that complains about leaked figures must not leak its own. Closing detaches
-    the figure from pyplot's manager; the Axes object stays intact and every
-    assertion below still reads the marks matplotlib drew on it.
+    The figure is closed before it is returned, for the same reason `main` closes
+    its own: `build_figure` goes through pyplot, so an unclosed one would sit in
+    the registry for the rest of the session and a test file that complains about
+    leaked figures must not leak its own. Closing detaches the figure from
+    pyplot's manager; the Figure and its Axes stay intact and every assertion
+    below still reads the marks and the text matplotlib put on them.
     """
     import matplotlib.pyplot as plt
 
@@ -369,9 +376,31 @@ def _render(tmp_path, cfg_eval=None):
 
     fc = json.loads((tmp_path / "forecast.json").read_text(encoding="utf-8"))
     fig = plots.build_figure(fc, cfg_eval or load_config("eval"), tmp_path)
-    ax = fig.axes[0]
     plt.close(fig)
-    return ax
+    return fig
+
+
+def _render(tmp_path, cfg_eval=None):
+    """The lead-time axis of that figure (the left one)."""
+    return _render_figure(tmp_path, cfg_eval).axes[0]
+
+
+def _rendered_text(fig) -> list[str]:
+    """Every string the figure puts in front of a reader, one entry per element.
+
+    Titles, axis labels, tick labels, annotations and legend entries - a claim
+    can be made in any of them, and the audit found one in an axis title.
+    """
+    texts = [t.get_text() for t in fig.texts]
+    for ax in fig.axes:
+        texts += [ax.get_title(), ax.get_xlabel(), ax.get_ylabel()]
+        texts += [t.get_text() for t in ax.texts]
+        legend = ax.get_legend()
+        if legend is not None:
+            texts += [t.get_text() for t in legend.get_texts()]
+        texts += [t.get_text() for t in ax.get_xticklabels()]
+        texts += [t.get_text() for t in ax.get_yticklabels()]
+    return [" ".join(t.split()) for t in texts if t.strip()]
 
 
 def test_plot_main_writes_the_png_and_leaves_no_figure_open(monkeypatch, tmp_path):
@@ -445,16 +474,153 @@ def test_plot_title_states_the_configured_undetected_convention(tmp_path):
 
     It is what every median on that axis charges a missed episode, and it is a
     config value — a shipped PNG must not assert a number the run did not use.
+
+    The title also names the lane: results/forecast.json is written by the
+    EVAL-side forecaster, which does not run in engine/predict.py, so a judge
+    reading this PNG must not take it for the demo they ran.
     """
     shipped = load_config("eval")
     _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0])
     ax = _render(tmp_path)
     undetected = float(shipped["metrics"]["lead_time_undetected_seconds"])
-    assert ax.get_title() == f"Lead time vs horizon (undetected = {undetected:g} s)"
+    assert ax.get_title() == ("Lead time vs horizon, eval-side forecaster "
+                              f"(undetected = {undetected:g} s)")
 
     changed = copy.deepcopy(shipped)
     changed["metrics"]["lead_time_undetected_seconds"] = -1
     ax = _render(tmp_path, cfg_eval=changed)
-    assert ax.get_title() == "Lead time vs horizon (undetected = -1 s)", (
+    assert ax.get_title() == ("Lead time vs horizon, eval-side forecaster "
+                              "(undetected = -1 s)"), (
         "the title is hardcoded again — it would print '0' for a run that "
         "charged something else")
+
+
+# --------------------------------------------- what the figure is allowed to say
+
+# The audit found the right-hand axis titled "Ranking holds when forecasting
+# ahead". At the 1 % FPR budget this figure is drawn for, the same run detects
+# 0 of 2 episodes at k=1, 4 and 8, and the k-step target is largely the
+# horizon-0 target repeated (docs/limitations.md, "Also worth knowing") — so
+# what ranking there is holds mostly because the target barely moved. The title
+# turned those two facts into a capability.
+#
+# These are the phrases a careless contributor reaches for when a flat AUROC
+# curve looks like good news. A figure is judged on its text alone: nobody
+# reading the PNG sees the caveat that lives in a docstring, so the check runs
+# over every string matplotlib would draw.
+CLAIMS_NEVER_RENDERED = (
+    r"ranking holds",
+    r"holds (?:up )?(?:when|while|as|under|across|out to)",
+    r"(?:still )?(?:works|holds|performs) (?:at|out to|ahead)",
+    r"early warning",
+    r"predicts? the next",
+    r"state[- ]of[- ]the[- ]art",
+    r"degrades? gracefully",
+    r"\bproves?\b",
+    r"\breliable\b",
+)
+
+# These name the thing the project does NOT have. The figure is allowed to
+# mention them only to deny them — that is what a caveat is — so each is
+# permitted inside a text element that also carries a denial, and banned
+# outright anywhere else.
+CLAIMS_ONLY_IF_DENIED = (
+    r"forecast\w* ahead",
+    r"supported (?:horizon|operating point)",
+    r"evidence (?:of|for|that)",
+)
+
+DENIAL = r"\b(?:not|no|never|cannot|without)\b"
+
+
+def test_the_figure_renders_no_claim_the_results_do_not_support(tmp_path):
+    """The judge-facing text of the shipped PNG, checked phrase by phrase.
+
+    Falsifiable against the edit that caused the finding: put
+    `ax2.set_title("Ranking holds when forecasting ahead")` back into
+    eval/plots.py and this fails twice over — once on the banned phrase, once on
+    "forecasting ahead" appearing in an element that denies nothing.
+
+    The second half is the other half of the same rule. The recurring failure
+    mode in this repo is a disclosure moved off the surface that carries the
+    claim, so deleting the caption is as much a regression as restoring the
+    title, and it fails here too.
+    """
+    _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0], n_detected=0)
+    rendered = _rendered_text(_render_figure(tmp_path))
+
+    for element in rendered:
+        for pattern in CLAIMS_NEVER_RENDERED:
+            assert not re.search(pattern, element, re.I), (
+                f"the figure renders {element!r}, which matches the claim "
+                f"pattern {pattern!r}. This PNG is read on its own: at this "
+                "budget the run detects 0/2 episodes at every horizon and the "
+                "k-step target largely repeats the horizon-0 target "
+                "(docs/limitations.md), so the text may describe the curve but "
+                "must not promise a capability.")
+        for pattern in CLAIMS_ONLY_IF_DENIED:
+            if re.search(pattern, element, re.I):
+                assert re.search(DENIAL, element, re.I), (
+                    f"the figure renders {element!r}, which asserts "
+                    f"{pattern!r} rather than denying it. The project has no "
+                    "supported forward-forecast operating point; the figure may "
+                    "name one only to say so.")
+
+    joined = " ".join(rendered)
+    assert "not a supported operating point" in joined, (
+        "the ranking axis no longer says what it is not; without that line a "
+        "flat AUROC curve reads as a working forecast")
+    assert "not evidence of forecasting ahead" in joined
+    assert "docs/limitations.md" in joined, (
+        "the caption no longer points at the limitation it is summarising")
+
+
+def test_the_ranking_axis_prints_the_detection_support_it_read_from_the_file(tmp_path):
+    """The counter-evidence on that axis is measured, not typed.
+
+    A caption that stated "0/2 episodes" as a literal would keep saying it after
+    a better run, which is how a figure starts lying. So the numbers come from
+    the same `fpr_0.01` blocks the curve is plotted from, and this drives three
+    different files through to prove it: the shipped shape (nothing detected), a
+    run that detected everything, and a file whose writer never recorded the
+    counts — which must say so rather than render a zero.
+    """
+    def caption(path):
+        return " ".join(t.get_text() for t in _render_figure(path).axes[1].texts)
+
+    _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0], n_detected=0)
+    assert ("episodes detected at this budget - k=1: 0/2, k=4: 0/2, k=8: 0/2"
+            in " ".join(caption(tmp_path).split()))
+
+    _forecast_json(tmp_path, n_episodes=2, per_episode=[40.0, 56.0], n_detected=2)
+    assert ("episodes detected at this budget - k=1: 2/2, k=4: 2/2, k=8: 2/2"
+            in " ".join(caption(tmp_path).split())), (
+        "the caption did not move when the results file did — it is typed, not "
+        "read")
+
+    _forecast_json(tmp_path, n_episodes=2, per_episode=[0.0, 56.0])
+    text = " ".join(caption(tmp_path).split())
+    assert "not recorded in this results file" in text
+    assert "0/2" not in text, "an unrecorded count rendered as a number anyway"
+
+
+def test_the_missing_results_message_prints_on_a_cp1252_console(monkeypatch,
+                                                                tmp_path, capsys):
+    """The only message this module prints, on the console a judge runs it from.
+
+    `python -m eval.plots` on a machine that has not run the harness yet prints
+    this line and exits 1. It used to carry an em dash, and the consoles here are
+    cp1252 or cp437, where that character arrives as a replacement glyph - in the
+    middle of the sentence telling the reader which command to run next. The
+    exit code and the empty stdout are pinned beside it: a refusal must not print
+    anything that reads as a rendered figure.
+    """
+    from eval import plots
+
+    monkeypatch.setattr(plots, "resolve_path", lambda *a, **k: tmp_path)
+    assert plots.main() == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    captured.err.encode("ascii")
+    assert "python -m eval.harness --model forecast" in captured.err

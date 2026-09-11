@@ -53,7 +53,7 @@ story, marked as what they are.
 - **Defence orchestrator.** Today the system emits a ranked, explained forecast and stops — it
   has no actuator by design. The extension turns a forecast into a staged response (rate-limit,
   quarantine a VLAN, force re-auth), gated on the same FPR budget. Prerequisite is 1.6: at
-  ~84,000 alerts/day (`docs/deployment.md` §5) an orchestrator would be an outage generator.
+  ~111,000 alerts/day (`docs/deployment.md` §5) an orchestrator would be an outage generator.
 - **Deception.** A forecast with lead time is only worth the time it buys. Honeytokens and
   decoy services placed on the hosts a forecast is rising on convert lead time into attacker
   cost and into a much cleaner label — a touch on a decoy is a near-zero-false-positive signal,

@@ -12,12 +12,30 @@ sentence of what follows — the prose is still here, and it still reaches the p
 grammar is documented in `scripts/build_deck.py`; the builder refuses to produce a deck that
 exceeds five slides, overflows a slide, or drops one of the disclosures below.
 
-Two things the builder enforces that are easy to undo by accident:
+Five things the builder enforces that are easy to undo by accident. All five run in CI —
+`tests/test_build_deck.py` is what makes them fire without a human rebuilding the deck, which
+is how every defect in the list below reached a verifier in the first place:
 
 - **Each required disclosure is pinned to the slide that carries the claim it qualifies**, not
   to the deck. The k-step correction is on slide 1 because slide 1 is where the *t+k* claim is
   made; the lead-time attribution is on slide 3 because slide 3 is where the number is printed.
   Moving one two slides away is the same as deleting it, and the build now says so.
+- **Slide 2 draws two lanes, and only one of them ships.** `docs/architecture.md` §2 says the
+  30-feature matrix feeds a **deployed** lane (the XGBoost scorer) and an **evaluation-only**
+  lane (TGN, GRAFT, the k-step head, the rank-mean fusion) of which "none of it runs in the
+  engine". The deployed lane must name the deployed model; every evaluation-only component must
+  be in the dashed lane and **absent from the solid one**; and the dash is checked in the saved
+  file, not just intended. The slide used to draw one solid chain through TGN and GRAFT into the
+  engine with XGBoost nowhere on it.
+- **Every figure in slide 3's table is bound to the model it describes**, looked up in
+  `docs/architecture.md` §4 row by row. 0.933 is a published number — of a *different model* —
+  so nothing that checks the *set* of numbers can see it being moved onto the XGBoost row. Each
+  row also has to say which lane it is: exactly one row may read **DEPLOYED ENGINE**, and it is
+  the row §3 names, not the largest one.
+- **A contradiction is refused, not only an omission.** Every required disclosure can be present
+  while the deck also says something that retracts one — "forward forecasts validated at k = 4
+  and 8" on a deck whose slide 1 says the k-step head fires on nothing. Those phrasings are
+  banned by pattern, one run of text at a time.
 - **Slide 5's numbered five are `docs/limitations.md`'s numbered five, section for section, in
   its order**, bound by content and not by count. The slide's own title sends a judge to that
   document, so the two lists have to be the same list. The adaptive-attacker limitation is a
@@ -69,24 +87,38 @@ makes the comparison on slide 3 fair rather than flattering; everything is Apach
 
 ---
 
-## Slide 2 — Architecture
+## Slide 2 — Architecture: two lanes, and only one of them ships
 
 <!-- deck:headline -->
-Causality is enforced, not assumed — and no raw identity reaches the model.
+**XGBoost** is the model in the scoring path. TGN, GRAFT and the k-step head are evaluation-only.
 
-<!-- deck:pipeline -->
+<!-- deck:lane deployed | DEPLOYED — what `engine/predict.py` loads and runs -->
 ```
-PCAP/CSV → streaming extractor → 30 window-bounded features → TGN temporal-graph memory
-        → causal Transformer (GRAFT) → forecast head (horizon k): **ranking only**
-        → engine → tamper-evident ledger
+PCAP/CSV → streaming extractor → 30 window-bounded features → **XGBoost scorer** (one booster)
+        → FPR threshold, TreeSHAP, ledger
+```
+
+<!-- deck:lane evaluation | EVALUATION-ONLY — measured in `eval/`, never loaded by the engine -->
+```
+same 30 features → TGN graph memory → GRAFT causal Transformer
+        → k-step head — **ranking only** → rank-mean fusion
 ```
 
 <!-- deck:points -->
-- **Packet + flow features** — TTL variance, TCP window, fragment flags, payload histogram, scan
-  signature, retransmissions — 110k packets/s in bounded memory
-- **Causal by construction** — `test_no_future_leakage` proves perturbing the future leaves the
-  past **bit-identical**
-- **Anonymised identity** — keyed-HMAC pseudonyms, per-epoch permutation, role-only node features
+- **Packet + flow features** — TTL variance, TCP window, payload histogram, scan signature
+- **Causal by construction** — `test_no_future_leakage`: the future cannot change the past
+- **Anonymised identity** — keyed-HMAC pseudonyms, per-epoch permutation, no raw IP
+
+**Two lanes, one feature matrix — and the judge's demo is the top lane.** `docs/architecture.md`
+§2 draws exactly this split: the one 30-feature matrix feeds a deployed lane and an
+evaluation-only lane, and "none of it runs in the engine" is that document's own phrase for the
+lower one. `engine/predict.py` loads **one booster** and calls `predict_proba` once; the two
+variants are chosen by input format (PCAP → all 30 features, CSV → flow-only), not chained. So
+the chevrons below the dashed caption — TGN, GRAFT, the k-step head, the rank-mean fusion — are
+how the numbers on slide 3 were *measured*, not what the binary a judge runs *does*. If this
+slide ever draws them as one chain again, `scripts/build_deck.py` fails the build: the deployed
+lane must name the deployed model, and every evaluation-only component must be inside the dashed
+lane and absent from the solid one.
 
 - **Packet + flow features**: TTL variance, TCP window, fragment flags, payload histogram,
   **sequential-vs-random scan signature**, retransmissions — 110k packets/s, bounded memory
@@ -104,13 +136,13 @@ PCAP/CSV → streaming extractor → 30 window-bounded features → TGN temporal
 Trained on brute-force + DoS days · tested on an unseen **bot** day · 1 % FPR budget
 
 <!-- deck:table -->
-| model | AUROC | median lead (horizon-0) | episodes |
+| model — where it runs | AUROC | lead (horizon-0) | episodes |
 |---|---|---|---|
-| **Fused (TGN + XGBoost, rank-mean)** | **0.933** | 4195 s (~70 min) | **2/2** |
-| XGBoost | 0.872 | 4208 s | 2/2 |
-| TGN temporal encoder | 0.840 | 38 s | 1/2 |
-| GRAFT (shipped config) | 0.701 | 1035 s | 2/2 |
-| Logistic regression *(graded baseline)* | 0.573 | 0 s | **0/2** |
+| **Fused TGN+XGBoost — EVAL-SIDE** | **0.933** | 4195 s (~70 min) | **2/2** |
+| **XGBoost — DEPLOYED ENGINE** | 0.872 | 4208 s | 2/2 |
+| TGN encoder — eval-side | 0.840 | 38 s | 1/2 |
+| GRAFT — eval-side | 0.701 | 1035 s | 2/2 |
+| LR *(graded baseline)* — eval-side | 0.573 | 0 s | **0/2** |
 
 <!-- deck:chips What is actually new here -->
 - **Honest-by-construction** protocol
@@ -144,11 +176,17 @@ XGBoost member, not the temporal-graph component; AUROC/F1 are inflated by row m
 (de-duplicated ≈ 0.89 / 0.04) and by benign subsampling. See `tier1_hardening_report.md` →
 Limitations & Confidence.
 
-*And which row the live demo actually is:* the fused row is an **evaluation-side** result.
+*And which row the live demo actually is — printed in the table, not left to this page:* the
+model column carries the lane beside every model, so the fused row reads **EVAL-SIDE** and the
+XGBoost row reads **DEPLOYED ENGINE** in the largest type on the slide. That is deliberate: the
+previous revision put 0.933 in 18 pt with the correction only here, in notes nobody projects.
 `engine/predict.py` loads one booster and calls `predict_proba` once — the deployed engine is a
 **single XGBoost model**, so the demo a judge runs corresponds to the **XGBoost row**, not the
 fused one. Engine-side fusion is on the roadmap (slide 5's band), not in the shipped binary. If
-a judge asks whether the demo is the 0.933 system, the answer is no, and this is where you say so.
+a judge asks whether the demo is the 0.933 system, the answer is no, and the slide has already
+said so. Each figure in the table is bound by `scripts/build_deck.py` to the row of
+`docs/architecture.md` §4 that measured it, so giving one model another model's AUROC fails the
+build rather than shipping.
 
 **What is actually new here** (the caveats above are about the *numbers*, not the contribution):
 
@@ -275,7 +313,7 @@ including which features are expensive to fake, which is where the defence actua
 [docs/threat_model.md](threat_model.md).
 
 **Where this goes next** (SIH sustainability criterion): GPU seed-averaging to recover a forward
-operating point, the M11 lab capture to obtain the two missing kill-chain stages, engine-side
+operating point, the M11 lab capture to obtain the three missing kill-chain stages, engine-side
 fusion, an IPv6/QUIC feature path, and optional public anchoring of ledger checkpoints —
 [docs/roadmap.md](roadmap.md) separates what is shipped from what is planned.
 

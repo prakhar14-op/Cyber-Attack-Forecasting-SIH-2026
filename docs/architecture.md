@@ -87,12 +87,18 @@ Test split (bot day), 1 % FPR budget:
 
 | model | AUROC | F1 | median lead | episodes |
 |---|---|---|---|---|
-| **Fused (rank-mean TGN+XGB) — shipped** | **0.933** | **0.172** | 4195 s | 2/2 |
+| **Fused (rank-mean TGN+XGB)** | **0.933** | **0.172** | 4195 s | 2/2 |
 | XGBoost | 0.872 | 0.140 | 4208 s | 2/2 |
 | TGN encoder | 0.840 | 0.009 | 38 s | 1/2 |
 | LSTM | 0.764 | 0.015 | 4202 s | 2/2 |
 | GRAFT (shipped config) | 0.701 | 0.013 | 1035 s | 2/2 |
 | Logistic regression (graded baseline) | 0.573 | 0.001 | 0 s | 0/2 |
+
+**Which of these ships.** Only the **XGBoost** row runs in the engine — it is the model
+`engine/predict.py` loads, and the row a judge's own demo run corresponds to. Every other row,
+**including the 0.933 fused headline**, is an **evaluation-side** result measured in `eval/`; the
+fusion is not loaded by the engine and engine-side fusion is roadmap (§3). An earlier revision of
+this table labelled the fused row "shipped", which was false.
 
 All rows use one standardised anonymisation key **and enforced training determinism** — repeated
 identical-seed runs are bit-identical, so these are reproducible values, not single draws

@@ -118,15 +118,16 @@ requirement:
 **The published rate is per host-day, and the multiplication has never appeared in a pitch
 document. Here it is.**
 
-`README.md` reports **187.1 alerts/host/day** for the shipped fused model at the 1 % FPR budget.
+Take the rate for the model that would actually be deployed. The engine runs **XGBoost**, and
+`README.md` reports **246.6 alerts/host/day** for it at the 1 % FPR budget.
 `docs/benchmark_protocol.md` is explicit that this is normalised per *host*-day and that "a
 whole network's daily alert volume is this rate times the number of hosts". The dataset's network
 is ~450 hosts. So:
 
-> **187.1 × 450 ≈ 84,000 alerts/day** — about **3,500/hour**, or **~58/minute**, continuously.
+> **246.6 × 450 ≈ 111,000 alerts/day** — about **4,600/hour**, or **~77/minute**, continuously.
 
-That is not a reviewable queue. It is not unique to the shipped model either — XGBoost alone is
-246.6/host/day (**≈ 111,000/day**) and even the logistic-regression baseline is 112.3
+That is not a reviewable queue, and no model choice rescues it: the eval-side fused row is
+187.1/host/day (**≈ 84,000/day**) and even the logistic-regression baseline is 112.3
 (**≈ 50,500/day**). It is the arithmetic consequence of a 1 % false-positive budget applied to a
 5-second stride: a host produces 17,280 windows/day (`docs/benchmark_protocol.md`), and 1 % of
 that is ~173 before any model skill is involved.
@@ -148,7 +149,7 @@ that is ~173 before any model skill is involved.
    of whether an analyst opened them.
 3. **The graded metric is not queue-shaped.** Lead time is measured from the *first* alert on an
    attacking host, so the operating question is "did the host rise" — a per-host trend — not
-   "did an analyst read 84,000 tickets".
+   "did an analyst read 111,000 tickets".
 
 **Mitigation the system does not have: alert coalescing.** There is no incident-grouping,
 deduplication or suppression logic anywhere in this repository. Consecutive windows on one host

@@ -121,7 +121,8 @@ does not make it see. Closing the gap means an IPv6 parse path, not a better cou
 - **Benign traffic is subsampled** (~30 of ~450 hosts/day, seed 1337 — decision 001), so
   `alerts/day` is a within-sample extrapolation, not a full-network projection. The published rate
   is **per host-day**; `docs/deployment.md` §5 now does the network-wide multiplication openly
-  (×~450 ≈ 84,000 alerts/day at the 1 % budget) and states the assumption it rests on — that the
+  (the deployed XGBoost engine's 246.6/host/day × ~450 ≈ 111,000 alerts/day at the 1 % budget)
+  and states the assumption it rests on — that the
   unsampled hosts behave like the sampled ones, which is reasonable and unverified.
 - **Our features are CICFlowMeter-*like*, not byte-identical** to the published CSVs: every
   model, including the graded LR baseline, is trained and scored on our own matrix, which is

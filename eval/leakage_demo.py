@@ -68,6 +68,38 @@ from eval import metrics as M
 DEFAULT_REPLICATES = 9
 
 
+#: Typographic punctuation another module may have written, and the ASCII
+#: spelling this report prints in its place. Held as code points rather than as
+#: the characters themselves so the table survives a re-encoding of this file.
+_ASCII_PUNCTUATION = {
+    chr(0x2014): "--",   # em dash
+    chr(0x2013): "-",    # en dash
+    chr(0x2018): "'",    # left single quotation mark
+    chr(0x2019): "'",    # right single quotation mark
+    chr(0x201C): '"',    # left double quotation mark
+    chr(0x201D): '"',    # right double quotation mark
+    chr(0x2026): "...",  # horizontal ellipsis
+    chr(0x00A0): " ",    # non-breaking space
+}
+
+
+def _console_safe(text: str) -> str:
+    """Text written by somebody else, made readable on the console this prints to.
+
+    Every literal in this module is ASCII by hand, but the refusal below QUOTES
+    an exception raised elsewhere, and that text is not ours to keep ASCII: the
+    key-check message this demo actually triggers carries an em dash. Python on
+    Windows prints to a cp1252/cp437 console, where that arrives as a replacement
+    glyph, and the report is also pasted into docs. So known punctuation is
+    transliterated and anything else is backslash-escaped rather than dropped -
+    the reader still gets every word of the cause, which is the whole reason the
+    cause is quoted instead of paraphrased.
+    """
+    for fancy, plain in _ASCII_PUNCTUATION.items():
+        text = text.replace(fancy, plain)
+    return text.encode("ascii", "backslashreplace").decode("ascii")
+
+
 class DatasetMissing(RuntimeError):
     """The real-data arm was asked for and the real data is not on this machine.
 
@@ -414,7 +446,7 @@ def measure_cic(model: ModelSpec, seed: int, n_shuffles: int) -> Comparison:
             "preconditions failed is quoted below rather than guessed at: the "
             "extracted windows and the anonymisation key are both needed, and "
             "reporting the wrong one would send a reader after the wrong fix.\n"
-            f"  underlying error: {type(exc).__name__}: {exc}\n"
+            f"  underlying error: {type(exc).__name__}: {_console_safe(str(exc))}\n"
             "  to produce these numbers:\n"
             "    python -m data.zip_fetch && python -m data.extract\n"
             "    $env:SIH26_HMAC_KEY='<the run key>'\n"

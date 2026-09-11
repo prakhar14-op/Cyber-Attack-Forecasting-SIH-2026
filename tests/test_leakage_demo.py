@@ -21,7 +21,10 @@ two episodes and its AUROC swings by tenths.
 
 from __future__ import annotations
 
+import builtins
 import json
+import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -120,17 +123,50 @@ def test_the_conclusion_survives_changing_the_knobs(overrides):
     assert c.inflation > 0.0, f"{overrides}: inflation {c.inflation:+.3f}"
 
 
-def test_both_arms_are_scored_on_the_same_number_of_rows():
-    """An AUROC gap that came from unequal test sizes would prove nothing."""
+def test_both_arms_are_scored_on_the_same_number_of_rows(monkeypatch):
+    """An AUROC gap that came from unequal test sizes would prove nothing.
+
+    OBSERVED at the model, not read back off the return value. `split_aurocs`
+    returns `n_test = int(held_out.sum())`, which is what the DISJOINT arm was
+    given; the random arm's size is a separate slice of a permutation and is
+    never reported. Asserting on the return value therefore cannot fail for this
+    property: halve the random arm and the returned number does not move. So
+    this wraps `_score_test` — the one door both arms go through to reach the
+    model — and asserts on the matrices that arrived there.
+    """
     spec = _world()
     X, y, day, _ = L.synthesise(spec, seed=1337)
     held_out = day == f"day{spec.n_days - 1}"
 
+    scored: list[tuple[int, int, int]] = []
+    real_score_test = L._score_test
+
+    def recording(X_train, y_train, X_test, model, seed):
+        scored.append((len(X_train), len(y_train), len(X_test)))
+        return real_score_test(X_train, y_train, X_test, model, seed)
+
+    monkeypatch.setattr(L, "_score_test", recording)
+
     disjoint, randoms, n_train, n_test, n_attack = L.split_aurocs(
         X, y, day, {f"day{spec.n_days - 1}"}, model=MODEL, seed=1337, n_shuffles=3)
 
-    assert n_test == int(held_out.sum())
-    assert n_train == y.size - n_test
+    assert len(scored) == 4, (
+        f"expected one day-disjoint fit and three random ones; the model was "
+        f"reached {len(scored)} times")
+    assert len(set(scored)) == 1, (
+        f"the arms were not fitted and scored on the same row counts. "
+        f"(train rows, train labels, test rows) per call, disjoint first: "
+        f"{scored}")
+
+    train_rows, train_labels, test_rows = scored[0]
+    assert train_labels == train_rows, "a fit got more rows than labels"
+    assert test_rows == int(held_out.sum()), (
+        f"each arm scored {test_rows} rows; the held-out day has "
+        f"{int(held_out.sum())}")
+    assert train_rows == y.size - test_rows
+    assert (n_train, n_test) == (train_rows, test_rows), (
+        f"the returned counts ({n_train}, {n_test}) are not the row counts the "
+        f"arms were actually handed ({train_rows}, {test_rows})")
     assert n_attack == int(np.count_nonzero(y[held_out]))
     assert len(randoms) == 3 and len(set(randoms)) > 1, (
         "three shuffles produced identical AUROCs — the shuffle is not varying")
@@ -251,11 +287,29 @@ def test_the_refusal_quotes_the_cause_it_saw_instead_of_naming_one(monkeypatch):
     have sent a reader with the dataset already downloaded off to re-download
     it. So the wrapper states both preconditions and quotes the exception it
     actually caught; this test drives each cause through it in turn and requires
-    the quoted type to be the one raised.
+    the quoted type AND text to be the ones raised.
+
+    The third case is the message this demo really triggers. The key check in
+    the data layer writes an em dash, and this report is printed to a Windows
+    console (cp1252, often cp437) and pasted into docs, where that character
+    arrives as a replacement glyph. Injecting only ASCII causes, as this test
+    used to, made the `.encode("ascii")` below a check on the literals in
+    eval/leakage_demo.py and on nothing else - the foreign text those literals
+    wrap was never exercised. The expected quote spells the transliteration out,
+    so a wrapper that reached ASCII by DELETING the character fails here too.
     """
+    em_dash = chr(0x2014)
+    cases = (
+        (FileNotFoundError("no such file: windows.parquet"),
+         "no such file: windows.parquet"),
+        (RuntimeError("anonymisation key env var 'SIH26_HMAC_KEY' is unset"),
+         "anonymisation key env var 'SIH26_HMAC_KEY' is unset"),
+        (RuntimeError(f"key env var is unset {em_dash} refusing to run with a "
+                      "default key"),
+         "key env var is unset -- refusing to run with a default key"),
+    )
     seen = []
-    for error in (FileNotFoundError("no such file: windows.parquet"),
-                  RuntimeError("anonymisation key env var 'SIH26_HMAC_KEY' is unset")):
+    for error, quoted in cases:
         def boom(*_a, _error=error, **_k):
             raise _error
 
@@ -264,17 +318,15 @@ def test_the_refusal_quotes_the_cause_it_saw_instead_of_naming_one(monkeypatch):
             L.measure_cic(MODEL, seed=1337, n_shuffles=1)
 
         message = str(exc.value)
-        assert f"underlying error: {type(error).__name__}: {error}" in message, message
+        assert f"underlying error: {type(error).__name__}: {quoted}" in message, message
         # both preconditions named, so neither cause reads as the only one
         assert "extracted windows" in message and "anonymisation key" in message
-        # the refusal is printed to a cp1252 console and pasted into docs; the
-        # errors driven through it here are ASCII, so anything non-ASCII in the
-        # rendered message came from this module's own literals.
+        # the rendered refusal, foreign text included, on a cp1252 console
         message.encode("ascii")
         seen.append(type(error).__name__)
 
-    assert seen == ["FileNotFoundError", "RuntimeError"], (
-        "one of the two causes did not reach the wrapper at all")
+    assert seen == ["FileNotFoundError", "RuntimeError", "RuntimeError"], (
+        "one of the three causes did not reach the wrapper at all")
 
 
 @pytest.mark.skipif(_cic_windows_present(),
@@ -324,6 +376,34 @@ def test_the_report_is_ascii_and_states_what_it_does_not_claim(capsys):
     assert "median AUROC over replicates" in out
 
 
+def test_the_shipped_report_stays_ascii_when_it_quotes_a_foreign_error(
+        monkeypatch, capsys):
+    """The ASCII guarantee has to cover the text this module did not write.
+
+    The test above runs the synthetic-only path, where every character printed
+    is a literal in eval/leakage_demo.py: it can only ever pin our own typing.
+    The shipped `--data both` report is the one that embeds an exception raised
+    in eval/dataset.py, and that is where the em dash a cp1252 console mangles
+    actually came from - a real run of this command printed one. So this drives
+    a foreign em dash through the whole report, stdout included.
+    """
+    em_dash = chr(0x2014)
+
+    def boom(*_a, **_k):
+        raise RuntimeError(f"anonymisation key env var 'SIH26_HMAC_KEY' is "
+                           f"unset {em_dash} refusing to run with a default key")
+
+    monkeypatch.setattr("eval.dataset.assemble_split", boom)
+    assert L.main(_cli(["--data", "both"])) == 0
+    out = capsys.readouterr().out
+
+    out.encode("ascii")  # printed to a cp1252 console and pasted into docs
+    assert "is unset -- refusing to run with a default key" in out, (
+        "the em dash the other module wrote was dropped rather than "
+        "transliterated; the quoted cause must keep every word it had")
+    assert "NOT MEASURED on this machine" in out
+
+
 def test_the_json_report_is_written_only_when_asked(tmp_path, capsys):
     out_path = tmp_path / "leakage.json"
     assert L.main(_cli([])) == 0
@@ -344,18 +424,94 @@ def test_the_json_report_is_written_only_when_asked(tmp_path, capsys):
         one["random_auroc_median"] - one["disjoint_auroc_median"])
 
 
-def test_the_demo_never_writes_into_the_results_directory(tmp_path, capsys):
-    """eval/ablation.py globs results/*.json and would read a demo as a model row."""
-    results_dir = resolve_path(load_config("eval")["paths"]["results_dir"])
-    before = sorted(p.name for p in results_dir.glob("*.json")) \
-        if results_dir.exists() else []
+def _inside(path: Path, directory: Path) -> bool:
+    """True if `path` lies in `directory`. Neither has to exist yet."""
+    try:
+        path.resolve().relative_to(directory)
+    except ValueError:
+        return False
+    return True
+
+
+def _record_writes(monkeypatch) -> list[Path]:
+    """Start recording every path opened for writing; return the growing list.
+
+    Covers the three doors a module has onto a file - `builtins.open`,
+    `Path.open`, and `Path.write_text`/`write_bytes`, which on this Python go
+    through `io.open` rather than through the builtin and so need their own
+    patch. It RECORDS and lets the write through rather than blocking it, so a
+    demo that does write into results/ fails on an assertion naming the path
+    instead of on an OSError thrown out of json.dump.
+    """
+    written: list[Path] = []
+    real_open, real_path_open = builtins.open, Path.open
+    real_write_text, real_write_bytes = Path.write_text, Path.write_bytes
+
+    def note(target, mode) -> None:
+        if not any(ch in str(mode) for ch in "wax+"):
+            return
+        try:
+            written.append(Path(os.fspath(target)))
+        except TypeError:
+            pass  # an already-open file descriptor names no path
+
+    def fake_open(file, mode="r", *a, **k):
+        note(file, mode)
+        return real_open(file, mode, *a, **k)
+
+    def fake_path_open(self, mode="r", *a, **k):
+        note(self, mode)
+        return real_path_open(self, mode, *a, **k)
+
+    def fake_write_text(self, *a, **k):
+        note(self, "w")
+        return real_write_text(self, *a, **k)
+
+    def fake_write_bytes(self, *a, **k):
+        note(self, "wb")
+        return real_write_bytes(self, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(Path, "open", fake_path_open)
+    monkeypatch.setattr(Path, "write_text", fake_write_text)
+    monkeypatch.setattr(Path, "write_bytes", fake_write_bytes)
+    return written
+
+
+def test_the_demo_never_writes_into_the_results_directory(tmp_path, monkeypatch,
+                                                          capsys):
+    """eval/ablation.py globs results/*.json and would read a demo as a model row.
+
+    ORDER-INDEPENDENT, which the listing-based version of this test was not: two
+    earlier tests in this file call `main()`, so a stray results/leakage_demo.json
+    would already be on disk before this test starts and a before/after listing
+    of results/ finds it in BOTH listings. That version passed in a normal run
+    and failed only when the test was run alone - exactly backwards.
+
+    So this observes the writes themselves. Every path opened for writing during
+    the two runs below is recorded, and none of them may lie inside results/ -
+    true whatever ran first, and true on the first invocation as much as on the
+    tenth. The probe is proved able to see a write at all by the `--json` run,
+    whose output file must appear in the record; without that check a probe that
+    silently intercepted nothing would report the same clean result.
+    """
+    results_dir = resolve_path(load_config("eval")["paths"]["results_dir"]).resolve()
+    written = _record_writes(monkeypatch)
 
     assert L.main(_cli([])) == 0
     capsys.readouterr()
+    asked_for = tmp_path / "asked-for.json"
+    assert L.main(_cli(["--json", str(asked_for)])) == 0
+    capsys.readouterr()
 
-    after = sorted(p.name for p in results_dir.glob("*.json")) \
-        if results_dir.exists() else []
-    assert after == before
+    assert asked_for.resolve() in [q.resolve() for q in written], (
+        "the probe recorded no write even though the demo was asked for a JSON "
+        "report, so its silence about results/ would mean nothing")
+    landed_in_results = sorted({str(q) for q in written if _inside(q, results_dir)})
+    assert landed_in_results == [], (
+        f"the demo wrote into the results directory: {landed_in_results}. "
+        "eval/ablation.py globs results/*.json and would render the demo as a "
+        "model row.")
 
 
 def test_the_seed_comes_from_config_when_the_flag_is_absent(tmp_path, capsys):

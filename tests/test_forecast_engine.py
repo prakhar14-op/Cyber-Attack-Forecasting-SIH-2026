@@ -99,6 +99,37 @@ class _NowcastHead(_Head):
         return p
 
 
+# Width of the per-row probability spread used by _RowVaryingHead. Wide enough
+# that two source windows of one host are unmistakably different numbers, narrow
+# enough that a horizon's band still cannot reach its neighbour's (the stub
+# bases are 0.20 apart, see _stub_tables) or leave [0, 1].
+_ROW_PROBABILITY_SPAN = 0.20
+
+
+class _RowVaryingHead(_Head):
+    """A head whose probability varies with the POSITION of the source row in
+    the matrix it is handed, so two source windows of the SAME host score
+    differently at the same horizon.
+
+    Every other test here uses the constant-probability `_Head`, which is what
+    the per-horizon isolation tests need — but under a constant, a host's newest
+    and oldest source windows produce byte-identical forecast entries, and which
+    one `per_host_curve` picks is unobservable. This head is the only condition
+    under which that property can be tested at all.
+
+    The spread is a strictly increasing function of the row index and nothing
+    else; the test never assumes which index is the newest window, it reads
+    (window_start, probability) off the forecast entries themselves.
+    """
+
+    def _probs(self, X) -> np.ndarray:
+        n = len(X)
+        if not n:
+            return np.empty(0, dtype=float)
+        steps = (np.arange(n, dtype=float) + 1.0) / (n + 1.0)
+        return self.probability + _ROW_PROBABILITY_SPAN * steps
+
+
 class _StubShap:
     """Stands in for TreeSHAP, which needs a real booster. Still returns NAMED
     features, so predict_file's output schema is applied for real."""
@@ -138,6 +169,12 @@ class _StubArtifacts:
         # the nowcast's emitted forecasts.json covers every k-step source window
         # and the two can be compared entry-for-entry.
         self.nowcast_alerts_everywhere = False
+        # When set, the k>0 heads return a DIFFERENT probability per source row
+        # instead of one constant per horizon, so a host's newest and oldest
+        # source windows are distinguishable in the output. Only the
+        # per_host_curve freshness test needs this; the per-horizon isolation
+        # tests need the constant.
+        self.per_window_probability = False
 
     def drop_spec(self, k: int) -> None:
         self.no_spec.add(int(k))
@@ -172,7 +209,8 @@ class _StubArtifacts:
         if k in self.no_weights:
             raise FileNotFoundError(f"artifacts/stub_{variant}.json missing (stub)")
         if k != 0:
-            head = _Head(self.probability[k])
+            factory = _RowVaryingHead if self.per_window_probability else _Head
+            head = factory(self.probability[k])
         elif self.nowcast_alerts_everywhere:
             head = _Head(0.99)
         else:
@@ -399,8 +437,16 @@ def test_each_horizon_is_scored_by_its_own_head(stub_artifacts, fixture_csv, tmp
 
 def test_source_windows_are_the_newest_and_are_capped_by_config(stub_artifacts,
                                                                 fixture_csv, tmp_path):
-    """The forecast is made from each host's newest windows, and `per_host_curve`
-    from the newest one — the point an operator actually acts on."""
+    """The forecast is made from each host's NEWEST windows, capped by config.
+
+    This says nothing about which of those windows `per_host_curve` is drawn
+    from. It cannot: under the constant-probability stub head every source
+    window of a host produces an identical entry. That property has its own
+    test, test_per_host_curve_is_drawn_from_each_hosts_newest_source_window,
+    which switches to a head that varies per source row. This docstring used to
+    claim the curve property as well, and the claim was the reason inverting
+    `_per_host_curve` left the whole suite green.
+    """
     from engine import forecast
     from engine import predict as P
 
@@ -419,14 +465,174 @@ def test_source_windows_are_the_newest_and_are_capped_by_config(stub_artifacts,
         every = wf.loc[wf["host"].astype(str) == host, "window_start"].astype(float)
         assert len(windows) <= cap, f"{host} forecast from {len(windows)} windows > cap {cap}"
         assert windows == set(sorted(every)[-cap:]), f"{host} did not use its NEWEST windows"
+        # the newest window is scored at EVERY served horizon, so the curve has
+        # a complete set of points available to be built from
         newest = max(windows)
-        curve_windows = {e["window_start"] for e in result["forecast"]
-                         if e["host"] == host and e["k"] == result["horizons"][0]}
-        assert newest == max(curve_windows)
+        at_newest = {e["k"] for e in result["forecast"]
+                     if e["host"] == host and e["window_start"] == newest}
+        assert at_newest == set(result["horizons"]), (
+            f"{host}'s newest source window ({newest}) was scored at {sorted(at_newest)}, "
+            f"not at every served horizon {result['horizons']}"
+        )
 
     # at least one host must actually hit the cap, or the cap is untested here
     assert any(len(w) == cap for w in per_host.values()), (
         f"no host in the fixture has more than {cap} windows — the cap is not exercised"
+    )
+
+
+def test_per_host_curve_is_drawn_from_each_hosts_newest_source_window(
+        stub_artifacts, fixture_csv, tmp_path):
+    """`per_host_curve` must carry the host's NEWEST source window, and no other.
+
+    The engine forecasts from up to `forecast_source_windows_per_host` windows
+    per host (12 at the shipped config). The app draws its risk curve from
+    `per_host_curve` alone, and a curve point carries no `window_start` — so a
+    curve built from a host's OLDEST source window is a curve about traffic up
+    to (cap - 1) * stride seconds old, drawn as if it were current, with nothing
+    on screen to say otherwise. Nothing crashes, no reason string appears, and
+    the degradation is silent.
+
+    Under the constant-probability `_Head` every other test uses, a host's
+    newest and oldest source windows produce identical entries, so inverting the
+    comparison in `_per_host_curve` changes no output at all. This test switches
+    to `_RowVaryingHead` for exactly that reason, and asserts BOTH halves: the
+    curve equals the newest window's points, AND it differs from the oldest
+    window's — the second half is what stops the test from passing on a curve
+    built from either.
+    """
+    from engine import forecast
+
+    stub_artifacts.per_window_probability = True
+    result = forecast.forecast_file(fixture_csv, out_dir=tmp_path)
+
+    def curve_point(entry: dict) -> dict:
+        """The projection of a forecast entry that per_host_curve carries."""
+        return {key: entry[key] for key in CONTRACT_CURVE_KEYS}
+
+    # host -> window_start -> k -> entry
+    entries: dict[str, dict[float, dict[int, dict]]] = {}
+    for entry in result["forecast"]:
+        entries.setdefault(entry["host"], {}).setdefault(
+            entry["window_start"], {})[entry["k"]] = entry
+
+    assert result["horizons"], "no horizon is served — there is no curve to check"
+    assert set(result["per_host_curve"]) == set(entries)
+    multi = sorted(host for host, w in entries.items() if len(w) > 1)
+    assert multi, (
+        "no host in this fixture was forecast from two source windows, so its "
+        "newest and oldest window are the same one and this test cannot tell a "
+        "fresh curve from a stale one"
+    )
+
+    for host, windows in entries.items():
+        newest, oldest = max(windows), min(windows)
+        curve = result["per_host_curve"][host]
+        assert [point["k"] for point in curve] == result["horizons"]
+        for point in curve:
+            k = point["k"]
+            assert point == curve_point(windows[newest][k]), (
+                f"{host}: the k={k} curve point does not come from the newest "
+                f"source window ({newest}); it matches source window(s) "
+                f"{[w for w in sorted(windows) if curve_point(windows[w][k]) == point]}"
+                " — the app would draw a stale window as the current risk"
+            )
+            if host in multi:
+                assert point != curve_point(windows[oldest][k]), (
+                    f"{host}: the newest ({newest}) and oldest ({oldest}) source "
+                    f"windows scored identically at k={k}, so this test would pass "
+                    "on a curve built from either — the stub head is no longer "
+                    "varying per source row"
+                )
+
+
+def test_per_host_curve_picks_the_later_window_of_two():
+    """The same property stated directly on the helper, with no dataset.
+
+    The end-to-end test above can only run where the fixture happens to give
+    some host two source windows; this one states the rule unconditionally, so
+    the newest-window selection stays pinned even on a thinner fixture.
+    """
+    from engine.forecast import _per_host_curve
+
+    def entry(host: str, window_start: float, k: int, probability: float) -> dict:
+        return {"host": host, "window_start": window_start, "k": k,
+                "seconds_ahead": 5.0 * k, "probability": probability,
+                "alert": probability >= 0.5, "stage": "benign", "technique": None,
+                "threshold": 0.5}
+
+    # deliberately not in window or k order, so the helper's own ordering is used
+    curve = _per_host_curve([
+        entry("a", 10.0, 4, 0.20), entry("a", 35.0, 1, 0.90),
+        entry("a", 10.0, 1, 0.10), entry("a", 35.0, 4, 0.80),
+        entry("b", 0.0, 1, 0.30),
+    ])
+
+    assert set(curve) == {"a", "b"}
+    assert [point["k"] for point in curve["a"]] == [1, 4], "the curve is k-ascending"
+    assert [point["probability"] for point in curve["a"]] == [0.90, 0.80], (
+        "host 'a' curve was built from window_start=10.0, the OLDER of its two "
+        "source windows, instead of 35.0"
+    )
+    assert [point["alert"] for point in curve["a"]] == [True, True]
+    assert [point["probability"] for point in curve["b"]] == [0.30]
+    assert set(curve["a"][0]) == CONTRACT_CURVE_KEYS
+
+
+@pytest.mark.parametrize("n_source", [0, -1])
+def test_a_source_window_cap_below_one_is_refused_before_the_run(
+        fixture_csv, tmp_path, monkeypatch, n_source):
+    """`engine.forecast_source_windows_per_host` < 1 must fail LOUDLY.
+
+    A cap of 0 is not a smaller forecast, it is no forecast. Measured with the
+    guard removed, on the bundled fixture (2080 host-windows): `forecast` comes
+    back [], `per_host_curve` {}, `unavailable_horizons` {} — and `horizons`
+    still [1, 4, 8]. Nothing raises, and the app then draws its empty-curve
+    copy, which says the forecaster "returned no usable per-host risk curve for
+    this input" and that this "is not a panel that failed" — a statement about
+    the capture, when the cause is one config line. The engine refuses instead,
+    and refuses BEFORE predict_file runs, so a misconfigured cap costs a message
+    rather than a full nowcast.
+
+    The enforcement existed with no test behind it, which meant deleting the
+    three lines would have left the suite green.
+    """
+    from engine import forecast
+    from engine import predict as P
+
+    real_load_config = forecast.load_config
+
+    def patched_load_config(name: str) -> dict:
+        cfg = real_load_config(name)
+        if name == "data":
+            cfg["engine"] = {**cfg["engine"],
+                             "forecast_source_windows_per_host": n_source}
+        return cfg
+
+    def predict_file_must_not_run(*args, **kwargs):
+        raise AssertionError(
+            "predict_file ran under a source-window cap of "
+            f"{n_source}: the cap is validated too late, or not at all"
+        )
+
+    monkeypatch.setattr(forecast, "load_config", patched_load_config)
+    monkeypatch.setattr(P, "predict_file", predict_file_must_not_run)
+
+    with pytest.raises(ValueError) as raised:
+        forecast.forecast_file(fixture_csv, out_dir=tmp_path)
+
+    message = str(raised.value)
+    assert "forecast_source_windows_per_host" in message, (
+        f"the error does not name the setting to fix: {message!r}"
+    )
+    assert "configs/data.yaml" in message, (
+        f"the error does not name the file to fix it in: {message!r}"
+    )
+    assert str(n_source) in message, (
+        f"the error does not quote the offending value {n_source}: {message!r}"
+    )
+    assert not (tmp_path / forecast.FORECAST_FILE).exists(), (
+        "a run that refused to forecast still wrote a k-step block"
     )
 
 
@@ -716,6 +922,39 @@ class _FakeXgb:
             fh.write("{}")
 
 
+def _stub_threshold_at_fpr(y, scores, budget) -> float:
+    """The stubbed FPR-budget cut: a function of the budget AND of the split it
+    is handed — its length and its positive count.
+
+    Both of those vary with the horizon in `stub_trainer` (shifting the target
+    +k drops rows, and some of the dropped rows are attack rows), so every
+    (horizon, budget) pair gets its own number. That is what lets the test below
+    pin each head's cut to ITS OWN validation split: a trainer that thresholded
+    every head against horizon 0's scores, or against horizon 0's labels, is
+    visible in `persisted`. A cut that ignored y and s — as this stub once
+    did, while its comment claimed to be horizon-dependent — would make
+    those trainers indistinguishable from a correct one.
+
+    The scale factors keep every value a plausible probability in (0, 1) and
+    keep the row term (1e-4 per row) an order of magnitude above the label term
+    (1e-6 per positive), so neither can mask the other.
+    """
+    return float(budget) + len(scores) / 10_000.0 + float(np.sum(y)) / 1_000_000.0
+
+
+# Rows in a stub split at horizon 0. A real split SHRINKS as the target is
+# shifted forward: the newest k windows of every host have no t+k label and drop
+# out. The stub reproduces that (one row per horizon of shift), which is what
+# makes the stubbed threshold_at_fpr in `stub_trainer` genuinely horizon-
+# dependent rather than budget-dependent alone.
+_SPLIT_ROWS_AT_HORIZON_0 = 200
+
+# Attack rows in a stub split at horizon 0. Shrinks with the horizon for the
+# same reason the row count does, so the LABELS a head is thresholded against
+# differ per horizon too, not only the number of scores.
+_ATTACK_ROWS_AT_HORIZON_0 = 20
+
+
 class _FakeSplit:
     def __init__(self, n: int, n_attack: int):
         self.X = np.zeros((n, 30), dtype=np.float32)
@@ -734,13 +973,17 @@ def stub_trainer(monkeypatch, tmp_path):
     from engine import train_engine as TE
 
     record = {"horizons": [], "persisted": None, "dir": tmp_path,
-              "attack_rows": {}, "models": []}
+              "attack_rows": {}, "models": [], "splits": {}}
 
     def fake_assemble(cfg, split, horizon=0, scaler=None, fit_scaler=False,
                       holdout_family=None):
         record["horizons"].append((split, horizon))
-        n_attack = record["attack_rows"].get((split, horizon), 20)
-        return _FakeSplit(200, n_attack), (scaler or object())
+        n_attack = record["attack_rows"].get(
+            (split, horizon), _ATTACK_ROWS_AT_HORIZON_0 - int(horizon))
+        n_rows = _SPLIT_ROWS_AT_HORIZON_0 - int(horizon)
+        assembled = _FakeSplit(n_rows, n_attack)
+        record["splits"][(split, horizon)] = assembled
+        return assembled, (scaler or object())
 
     def fake_build(name, cfg):
         model = _FakeXgb()
@@ -751,9 +994,9 @@ def stub_trainer(monkeypatch, tmp_path):
     monkeypatch.setattr(D, "persist_window_scaler", lambda cfg, scaler: "stub")
     monkeypatch.setattr(baselines, "build_model", fake_build)
     monkeypatch.setattr(M, "auroc", lambda y, s: 0.5)
-    # a budget- AND horizon-dependent cut, so a reused threshold is visible
-    monkeypatch.setattr(M, "threshold_at_fpr",
-                        lambda y, s, budget: float(budget) + 0.001 * len(s))
+    # Genuinely horizon-dependent, because it reads the split it is given; see
+    # _stub_threshold_at_fpr for why a budget-only cut proved nothing.
+    monkeypatch.setattr(M, "threshold_at_fpr", _stub_threshold_at_fpr)
     monkeypatch.setattr(TE, "resolve_path", lambda p: tmp_path)
     monkeypatch.setattr(TH, "persist_threshold",
                         lambda cfg, thresholds: record.__setitem__("persisted", thresholds))
@@ -795,6 +1038,60 @@ def test_train_engine_fits_one_head_per_horizon_under_its_own_key(stub_trainer):
             )
             for budget in load_config("eval")["fpr_budgets"]:
                 assert f"fpr_{budget}" in block
+
+    # The persisted cuts are genuinely DIFFERENT numbers per horizon and per
+    # budget. This is the assertion the horizon-dependent stub above buys: it
+    # fails both if the trainer reuses one horizon's cut for the others and if
+    # the stub stops varying with the horizon, which would quietly retire the
+    # guard rather than break it.
+    budgets = list(load_config("eval")["fpr_budgets"])
+    assert len(budgets) > 1, "one FPR budget cannot exercise per-budget isolation"
+    for variant in ("full", "flow"):
+        for budget in budgets:
+            cuts = {k: persisted[TH.horizon_variant(variant, k)][f"fpr_{budget}"]
+                    for k in [0, *horizons]}
+            assert len(set(cuts.values())) == len(cuts), (
+                f"{variant} @ fpr_{budget}: horizons share a threshold ({cuts}) — "
+                "either the trainer reused one horizon's cut for the others, or the "
+                "stubbed cut stopped depending on the horizon and this test no longer "
+                "distinguishes the two"
+            )
+        for k in [0, *horizons]:
+            cuts = {b: persisted[TH.horizon_variant(variant, k)][f"fpr_{b}"]
+                    for b in budgets}
+            assert len(set(cuts.values())) == len(cuts), (
+                f"{variant} k={k}: every FPR budget got the same cut ({cuts})"
+            )
+    # ...and every head's cut was computed from ITS OWN validation split. The
+    # stubbed cut reads that split's length and its positive count
+    # (_stub_threshold_at_fpr), both of which differ per horizon, so a trainer
+    # that thresholded a k>0 head against horizon 0's SCORES or against horizon
+    # 0's LABELS lands on a different number here. The expectation is rebuilt
+    # from the split the stub actually handed the trainer.
+    for variant in ("full", "flow"):
+        for k in [0, *horizons]:
+            va = stub_trainer["splits"][("val", k)]
+            block = persisted[TH.horizon_variant(variant, k)]
+            for budget in budgets:
+                expected = _stub_threshold_at_fpr(va.y, np.empty(len(va.y)), budget)
+                # exact: the test rebuilds the cut from the same inputs the
+                # trainer had, so a one-label difference must not be tolerated
+                assert block[f"fpr_{budget}"] == pytest.approx(expected, rel=0, abs=1e-12), (
+                    f"{variant} k={k} @ fpr_{budget}: the cut {block[f'fpr_{budget}']} "
+                    f"was not computed from the k={k} validation split "
+                    f"({len(va.y)} rows, {int(va.y.sum())} attack) — this head is "
+                    "thresholded against another horizon's scores or labels"
+                )
+
+    # the stub really did hand every horizon a DIFFERENT val split, or the
+    # assertion above would also hold for a trainer that reused one of them
+    shapes = {(len(stub_trainer["splits"][("val", k)].y),
+               int(stub_trainer["splits"][("val", k)].y.sum()))
+              for k in [0, *horizons]}
+    assert len(shapes) == len(horizons) + 1, (
+        f"the stub val splits are not distinct per horizon ({sorted(shapes)}) — the "
+        "per-horizon threshold assertions above cannot fail on a reused split"
+    )
 
     # one head per (variant, horizon), each written to a distinct file
     files = [persisted[TH.horizon_variant(v, k)]["file"]

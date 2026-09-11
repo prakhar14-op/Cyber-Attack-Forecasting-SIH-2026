@@ -1,4 +1,4 @@
-"""Retired claims must stay retired.
+r"""Retired claims must stay retired.
 
 An adversarial audit found published claims that were false, and the reason they
 survived so long is that nothing in the build objected when a corrected sentence
@@ -36,6 +36,51 @@ new image format needs no maintenance here.
 
 There is deliberately NO size cap. A cap is a silent hole exactly the width of
 the file that crosses it.
+
+DISCOVERY HAS TO DEFEND ITSELF, NOT MERELY BE RIGHT TODAY
+----------------------------------------------------------
+`is_text` deciding by decoding is the whole of that rule, which means one
+function is all that stands between this guard and the list that caused the
+defect above. A verifier rewrote it as an extension allowlist -- `.md`, `.py`,
+`.yml`, `.svg`, under the comment "only prose formats actually carry claims;
+skip the rest for speed" -- and nothing failed. Every path pinned at the time was
+a `.md`, a `.py` or a `.yml`, so all of the pins passed while the discovered
+scope quietly lost about a fifth of its files, and the number of tests generated
+from SCOPE fell with it, with nothing asserting on either.
+
+Two mechanisms now make that edit loud, and they fail for different reasons on
+purpose:
+
+  * `test_scope_is_every_decodable_file_not_a_chosen_kind` re-derives the whole
+    of SCOPE from the filesystem using its own inline decode and compares the
+    sets. It shares only the exclusion constants with `discover_scope`; in
+    particular it never calls `is_text`, so an `is_text` that starts judging by
+    filename disagrees with it on the first run. This is the same
+    guard-the-shortcut trick `paragraph_slots_literal` applies to the other
+    optimisation in this file, and it is worth exactly as much as its
+    independence: do not make either side call the other to remove the
+    duplication.
+  * `KIND_SCOPE` pins one file of each kind that no `.md`, `.py` or `.yml` pin
+    shares, so the pinned set stops being a single-family sample that any
+    plausible prose-formats allowlist keeps by accident. Those entries are
+    pinned for their KIND. They are not more precious than their neighbours.
+
+WHAT THIS GUARD STRUCTURALLY CANNOT SEE
+----------------------------------------
+Deciding scope by decoding also decides what is unreachable: a judge-facing
+deliverable that is not UTF-8 is outside this guard altogether, and two shipped
+ones are -- `docs/architecture.pdf` and `docs/deck/sih26153_technical_deck.pptx`.
+A retired claim printed on a deck slide is exactly as visible to a judge as one
+in `README.md`, and nothing in this file would notice it. So the boundary is
+asserted rather than assumed, by
+`test_the_binary_deliverables_are_outside_this_guard`: it is a stated handover
+rather than a silent hole. The PDF's contents are guarded by
+`tests/test_figures.py`. The deck is built by `scripts/build_deck.py`, so
+guarding what its slides SAY belongs with that builder -- `tests/test_build_deck.py`
+-- and not here. Nothing in this module can read either file, whatever it is
+named on any given day, so a claim that has to be checked on a slide has to be
+checked there. This paragraph states where the boundary runs, not what currently
+sits on the other side of it: the assertion is in the test.
 
 `tier1_hardening_report.md`, `diagnosis_report.md` and `docs/decisions/` are
 excluded on purpose: they are the record of these defects and have to quote them
@@ -95,13 +140,50 @@ pretending to be a considered exception, and fails.
 `test_retired_sentences_are_caught_inside_the_real_documents` re-runs the
 measurement above on every commit, so the ratchet is proved against the real
 files rather than against sentences held in isolation.
+
+EVERY PATTERN MUST BE LOAD-BEARING, OR IT CAN BE SWITCHED OFF IN SILENCE
+------------------------------------------------------------------------
+An exemption covers any occurrence lying inside it, so an `allow_exact` entry
+that IS the banned phrase exempts every occurrence of that phrase everywhere --
+the pattern stops doing anything at all. A verifier added the bare word
+`cascade` to the cascade claim's `allow_exact`. It satisfied
+`test_every_allowance_is_anchored_in_a_real_document` on both counts, because the
+word does contain a banned phrase and does occur in scanned documents, and the
+ratchet stayed green too. He then appended "The deployed engine is a cascade." to
+`README.md` and the whole file reported no new failure.
+
+Nothing failed because no retired sentence depended on `/cascade/` ALONE: all
+three cascade sentences also said "fast tier", so `/fast\s+tier/` went on
+catching them while `/cascade/` did nothing. Five patterns here were unproven in
+that sense.
+
+`test_every_pattern_is_load_bearing_for_a_retired_sentence` closes it from the
+pattern side. Each pattern must have at least one retired sentence that IT
+catches and that the claim's OTHER patterns do not, so switching a pattern off --
+by exempting it, by loosening it into a no-op, or by deleting it -- always drops
+a sentence somewhere a test is watching. A new pattern now costs a sentence that
+proves it, which is what makes a pattern mean anything.
+
+The same test caught a pattern that had never worked at all:
+`/net_guard(?:\.py)?\s+enforces/` could not match, because `normalise` strips `_`
+before any pattern is applied and the text it hunts has by then become
+`netguard`. It is repaired to `net_?guard` here. Every pattern is only ever
+applied to normalised text, and the proving sentence is normalised like anything
+else, so requiring one makes an inert pattern impossible to add unnoticed.
+
+`allow_exact` is closed from its own side to match: an entry may not be a banned
+phrase standing alone, and may not be a fragment of any retired sentence. A
+retraction quotes what it retracts and then says something about it, so it is
+WIDER than the claim it quotes. An excerpt that fits INSIDE the reintroduction is
+not a retraction; it is a licence for one.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -179,9 +261,37 @@ PINNED_TEST_SCOPE = (
     "tests/test_app.py",
 )
 
+# Pinned for their KIND. Every other pinned path above is a `.md`, a `.py` or a
+# `.yml`, and that is what let an extension allowlist replace `is_text` with all
+# of the pins still passing: the pinned set was one prose family and the
+# allowlist kept exactly that family. Each entry below is the only representative
+# this guard needs of a kind such an allowlist drops -- no extension, `.ini`,
+# `.txt`, `.yaml`, `.sh`, `.ps1` -- plus the architecture SVG, whose `<text>`
+# labels carry the "not a cascade" retraction onto a slide a judge reads.
+# They are ordinary files; what is load-bearing about them is their suffix.
+KIND_SCOPE = (
+    "LICENSE",
+    "pytest.ini",
+    "requirements.txt",
+    "engine/technique_map.yaml",
+    "capture/capture.sh",
+    "scripts/reproduce_results.ps1",
+    "docs/img/01-architecture-dataflow.svg",
+)
+
+# Judge-facing deliverables that do NOT decode as UTF-8 and are therefore outside
+# this guard by construction, named so the boundary is owned rather than merely
+# true. See the module docstring: the PDF's contents are guarded by
+# tests/test_figures.py, the deck's belong with scripts/build_deck.py.
+BINARY_DELIVERABLES = (
+    "docs/architecture.pdf",
+    "docs/deck/sih26153_technical_deck.pptx",
+)
+
 # Everything that must be scanned whatever the filesystem looks like.
 PINNED_SCOPE = (
-    CORE_SCOPE + APP_SCOPE + CODE_SCOPE + PINNED_TEST_SCOPE + UNREACHABLE_SCOPE
+    CORE_SCOPE + APP_SCOPE + CODE_SCOPE + PINNED_TEST_SCOPE + KIND_SCOPE
+    + UNREACHABLE_SCOPE
 )
 
 
@@ -231,6 +341,40 @@ def discover_scope() -> tuple[str, ...]:
 
 
 SCOPE = discover_scope()
+
+
+def scope_by_decoding() -> frozenset[str]:
+    """A second opinion on SCOPE, written not to share the decision under attack.
+
+    `discover_scope` asks `is_text`, and `is_text` is one function away from being
+    the extension list that has been escaped every time this guard has used one.
+    So this walks the tree again and decodes each file inline, right here, where
+    the rule is visible next to the assertion that depends on it. It shares the
+    exclusion constants -- those are named paths and are governed by their own
+    tests -- and nothing else. It must NOT be refactored to call `is_text`,
+    `discover_scope`, or anything they call: two implementations that agree are
+    evidence only while they are two.
+    """
+    found: set[str] = set()
+    for root, dirs, files in os.walk(REPO_ROOT):
+        here = Path(root)
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and d not in PRUNED_DIR_NAMES
+            and (here / d).relative_to(REPO_ROOT).as_posix() not in EXCLUDED_DIRS
+        ]
+        for name in files:
+            path = here / name
+            relative = path.relative_to(REPO_ROOT).as_posix()
+            if relative in EXCLUDED_FILES:
+                continue
+            try:
+                path.read_bytes().decode("utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            found.add(relative)
+    return frozenset(found | set(UNREACHABLE_SCOPE))
 
 
 @dataclass(frozen=True)
@@ -283,6 +427,11 @@ BANNED: tuple[BannedClaim, ...] = (
             "val, never on test",
             "It has the **best validation AUROC** of any row.",
             "the fused row was selected on val, never on test",
+            # Proves the third pattern alone: names the fused row and the figure
+            # without "of any row" and without the selection clause, so neither of
+            # the other two patterns reaches it. Without this the third pattern
+            # could be exempted or loosened away in silence.
+            "the fused ensemble carries the best validation AUROC we measured",
         ),
     ),
     BannedClaim(
@@ -350,6 +499,16 @@ BANNED: tuple[BannedClaim, ...] = (
             # one-off edit to one caption.
             "Live scoring in this app uses the deployed fast tier (XGBoost); the "
             "**fused** row is the eval-side headline model.",
+            # The two sentences that make /cascade/ and /tier[- ]?(?:one|1)\s+
+            # scorer/ load-bearing. Every sentence above also says "fast tier", so
+            # /fast\s+tier/ was catching all of them and those two patterns were
+            # provably doing nothing -- which is how the bare word "cascade" could
+            # be added to allow_exact, switching /cascade/ off entirely, with this
+            # file reporting no failure. Each of these says exactly one of the two
+            # things, so neither pattern can be switched off in silence again.
+            "the deployed engine is a cascade, escalating only when the first "
+            "stage is unsure",
+            "the tier-1 scorer handles most windows and defers the rest",
         ),
     ),
     BannedClaim(
@@ -370,7 +529,13 @@ BANNED: tuple[BannedClaim, ...] = (
             r"(?:disabled|blocked)|stays?\s+offline|all\s+run\s+offline)",
             r"(?:sockets?\s+blocked|network\s+disabled)[^.]{0,120}"
             r"(?:test\s+suite|every\s+test|all\s+(?:the\s+)?tests|whole\s+suite)",
-            r"net_guard(?:\.py)?\s+enforces",
+            # `net_?guard`, not `net_guard`: every pattern is applied to NORMALISED
+            # text, and `normalise` strips `_`, so the original spelling could not
+            # match anything this guard ever looks at -- not a retired sentence and
+            # not a document. It was inert from the day it was written, and the
+            # measurement that found it is the load-bearing test below, which
+            # demands a sentence that this pattern and no other catches.
+            r"net_?guard(?:\.py)?\s+enforces",
         ),
         # The corrected wording in docs/INSTALL.md names the three tests instead
         # of the suite, so it trips none of these patterns and needs no exemption.
@@ -380,6 +545,12 @@ BANNED: tuple[BannedClaim, ...] = (
             "Inference, the demo, ledger verification and the test suite all stay "
             "offline (CLAUDE.md hard constraint 1).",
             "every test in the suite runs with sockets blocked",
+            # Proves the second pattern alone: the blocking clause comes FIRST, so
+            # the suite-then-blocked pattern does not reach it.
+            "With sockets blocked from conftest, the whole suite still passes",
+            # Proves the repaired third pattern alone: names the enforcing module
+            # without saying "suite", "every test" or "sockets blocked" anywhere.
+            "tests/net_guard.py enforces the offline constraint for the demo",
         ),
     ),
     BannedClaim(
@@ -544,7 +715,7 @@ def test_the_pinned_count_is_derived_not_written():
         "from an f-string precisely so this figure cannot go stale; do not write "
         "the number by hand.\nThe docstring currently reads:\n" + doc
     )
-    groups = (CORE_SCOPE, APP_SCOPE, CODE_SCOPE, PINNED_TEST_SCOPE,
+    groups = (CORE_SCOPE, APP_SCOPE, CODE_SCOPE, PINNED_TEST_SCOPE, KIND_SCOPE,
               UNREACHABLE_SCOPE)
     assert len(PINNED_SCOPE) == sum(len(g) for g in groups), (
         "PINNED_SCOPE is no longer the concatenation of its groups, so a whole "
@@ -571,6 +742,142 @@ def test_the_defect_record_stays_out_of_scope():
     )
 
 
+def _kinds(paths) -> str:
+    counted = Counter(Path(p).suffix or "<no extension>" for p in paths)
+    return ", ".join(f"{kind} x{n}" for kind, n in sorted(counted.items()))
+
+
+def test_scope_is_every_decodable_file_not_a_chosen_kind():
+    """Scope must stay a decode, and must not quietly become a list of kinds.
+
+    The defect this exists for: `is_text` was replaced with an extension
+    allowlist -- `.md`, `.py`, `.yml`, `.svg`, "only prose formats actually carry
+    claims; skip the rest for speed" -- and every pinned path survived it, because
+    the pinned paths were all in that family. SCOPE lost about a fifth of its
+    files, the generated test count fell with it, and no assertion in this module
+    was pointed at either number.
+
+    So neither number is written down here. The comparison is against
+    `scope_by_decoding`, which re-derives the whole set from the filesystem with
+    its own decode, so the expectation is re-measured on every run and a file
+    added tomorrow needs no edit here. Falsifiable exactly as it broke: make
+    `is_text` decide by suffix and this fails, naming the kinds that vanished.
+
+    What it does NOT cover, stated rather than left to be discovered: the two
+    walks share their pruning and their exclusion constants, so an edit to THOSE
+    -- pruning a real directory, or naming a live document in EXCLUDED_FILES --
+    moves both sides together and this comparison stays silent. That direction is
+    covered from two other sides instead: the pinned surfaces are asserted
+    against the filesystem rather than against a second walk, and
+    `test_no_exclusion_has_widened_without_being_written_down` pins the exclusion
+    constants themselves. Neither mechanism alone is the guard; do not delete one
+    because the other passes.
+    """
+    second = scope_by_decoding()
+    first = frozenset(SCOPE)
+    missing = sorted(second - first)
+    surplus = sorted(first - second)
+    assert not missing, (
+        f"discover_scope() dropped {len(missing)} file(s) that decode as UTF-8, of "
+        f"kinds: {_kinds(missing)}.\nA file whose bytes are text is in scope; that "
+        "is the whole rule, and every revision of this guard that replaced it with "
+        "a list of kinds was escaped by a claim written just outside the list. If "
+        "`is_text` now judges by filename, revert it. If a path genuinely must be "
+        "exempt, name it in EXCLUDED_FILES or EXCLUDED_DIRS, where both this test "
+        "and the walk can see it.\nDropped:\n  " + "\n  ".join(missing[:20])
+    )
+    assert not surplus, (
+        f"SCOPE contains {len(surplus)} path(s) a plain decode of the tree does not "
+        f"find: {surplus[:20]}. Either the walk is reaching something it prunes, or "
+        "UNREACHABLE_SCOPE names a path that no longer exists -- which is reported "
+        "properly by test_pinned_surfaces_are_scanned."
+    )
+
+
+def test_no_exclusion_has_widened_without_being_written_down():
+    """Every exclusion is a hole, so widening one must be a deliberate act.
+
+    `test_the_defect_record_stays_out_of_scope` checks these constants from the
+    inside -- that what is excluded really is out of SCOPE. Nothing checked the
+    other direction, and that is the cheapest possible version of the defect this
+    whole module exists for: a claim stops failing the guard the moment its
+    document is named here, and the edit is one line in a frozenset. Only the
+    pinned surfaces would notice, and only for the paths they pin -- exclude
+    `docs/dataset_quality.md`, or prune `configs/`, and nothing in this file says
+    a word.
+
+    The duplication below is the point. These are deliberately restated rather
+    than derived, so widening an exclusion takes two edits in two places and the
+    second one is this test telling you what you are doing. If you are adding a
+    document here, the question to answer in the commit message is why the
+    retraction cannot live in `tier1_hardening_report.md` like the others.
+    """
+    assert EXCLUDED_FILES == frozenset({
+        "tier1_hardening_report.md",
+        "diagnosis_report.md",
+        "tests/test_docs_claims.py",
+    }), (
+        "EXCLUDED_FILES has changed. It holds the two audit-record documents, "
+        "which have to quote the retired sentences verbatim, and this module, "
+        "which declares them. Anything else named here is a judge-facing document "
+        f"that has been taken out of the scan.\nIt now reads: "
+        f"{sorted(EXCLUDED_FILES)}"
+    )
+    assert EXCLUDED_DIRS == frozenset({"docs/decisions"}), (
+        "EXCLUDED_DIRS has changed. Decision records supersede each other by "
+        "quoting what they supersede, which is why that one directory is out. A "
+        "second entry here is a directory of documents nothing is checking.\n"
+        f"It now reads: {sorted(EXCLUDED_DIRS)}"
+    )
+    assert PRUNED_DIR_NAMES == frozenset({"__pycache__"}), (
+        "PRUNED_DIR_NAMES has changed. It prunes generated bytecode, and the walk "
+        "separately prunes dot-directories. Adding a real source directory here "
+        "removes every file under it from the scan without excluding a single "
+        f"named path.\nIt now reads: {sorted(PRUNED_DIR_NAMES)}"
+    )
+
+
+@pytest.mark.parametrize("relative", BINARY_DELIVERABLES)
+def test_the_binary_deliverables_are_outside_this_guard(relative):
+    """The edge of this guard, asserted instead of assumed.
+
+    Scope is decided by decoding, so a judge-facing deliverable that is not UTF-8
+    cannot be scanned for retired claims at all -- and a retired claim on a deck
+    slide is exactly as visible to a judge as one in README.md. Naming the two
+    shipped binaries here turns that from a thing someone happens to know into a
+    handover: the PDF's contents are guarded by tests/test_figures.py, and the
+    deck is built by scripts/build_deck.py, so guarding its text belongs with that
+    builder rather than here.
+
+    The decode is inline rather than through `is_text` on purpose: this test
+    asserts what the bytes are, not what `is_text` currently thinks.
+    """
+    path = REPO_ROOT / relative
+    assert path.exists(), (
+        f"{relative} is declared here as a judge-facing binary outside this "
+        "guard's reach, but it does not exist. If it was renamed, follow the "
+        "rename; if it was dropped as a deliverable, drop it from "
+        "BINARY_DELIVERABLES and from the module docstring in the same edit."
+    )
+    try:
+        path.read_bytes().decode("utf-8")
+    except (UnicodeDecodeError, OSError):
+        decodes = False
+    else:
+        decodes = True
+    assert not decodes, (
+        f"{relative} now decodes as UTF-8, so it is no longer outside this guard: "
+        "it is scannable prose. Remove it from BINARY_DELIVERABLES and let "
+        "discovery pick it up -- and check the module docstring, which describes "
+        "it as unreachable."
+    )
+    assert relative not in SCOPE, (
+        f"{relative} does not decode as UTF-8 yet appears in SCOPE, so every "
+        "pattern is being run over binary noise. discover_scope() is admitting "
+        "files it cannot read."
+    )
+
+
 @pytest.mark.parametrize("claim", BANNED, ids=lambda c: c.slug)
 def test_patterns_catch_the_sentences_they_retired(claim):
     """Guard for the guard: every retired sentence must still trip its own patterns,
@@ -584,6 +891,61 @@ def test_patterns_catch_the_sentences_they_retired(claim):
         assert hits(normalise(sentence), claim), (
             f"[{claim.slug}] no pattern matches the retired sentence it exists to "
             f"ban: {sentence!r}. Loosening these regexes releases the ratchet."
+        )
+
+
+@pytest.mark.parametrize("claim", BANNED, ids=lambda c: c.slug)
+def test_every_pattern_is_load_bearing_for_a_retired_sentence(claim):
+    """No pattern may be switched off without a sentence falling on the floor.
+
+    The test above proves each SENTENCE is caught by SOME pattern, which is the
+    wrong way round for the failure that actually happened: a pattern with no
+    sentence of its own can be neutralised and every other test stays green. A
+    verifier put the bare word `cascade` in this claim's allow_exact -- which
+    exempts every occurrence of it anywhere, so /cascade/ stopped matching -- and
+    then appended "The deployed engine is a cascade." to README.md. Nothing
+    failed, because all three cascade sentences also said "fast tier" and
+    /fast\\s+tier/ kept catching them.
+
+    So each pattern must have a retired sentence that IT catches and its siblings
+    do NOT. Exempt a pattern, loosen it into a no-op, or delete it, and that
+    sentence stops being caught here. Note this is measured through `hits`, which
+    applies allow_exact: an exemption wide enough to disable a pattern fails on
+    this line, not on the README edit that follows it three commits later.
+
+    It is also what caught /net_guard(?:\\.py)?\\s+enforces/, which had never
+    matched anything: `normalise` strips `_` before any pattern runs, so the text
+    it looked for did not survive to be looked at. Patterns are checked here
+    against normalised sentences, exactly as documents are scanned, so an inert
+    pattern cannot be added without a sentence it fails to prove.
+    """
+    for pattern in claim.patterns:
+        alone = replace(claim, patterns=(pattern,))
+        siblings = replace(
+            claim, patterns=tuple(p for p in claim.patterns if p is not pattern)
+        )
+        caught = [s for s in claim.retired_sentences if hits(normalise(s), alone)]
+        proving = [
+            s for s in caught if not hits(normalise(s), siblings)
+        ]
+        assert proving, (
+            f"[{claim.slug}] /{pattern.pattern}/ is not load-bearing: no retired "
+            "sentence depends on it alone, so it can be switched off and every "
+            "other test in this file still passes.\n"
+            + (
+                f"It catches {len(caught)} retired sentence(s), but each of them is "
+                "also caught by another pattern of this claim, so removing it "
+                "changes nothing that is checked."
+                if caught else
+                "It catches NO retired sentence at all -- it has been loosened, or "
+                "it is inert. Check it against NORMALISED text: `normalise` strips "
+                "* _ ` and folds dashes and whitespace before any pattern runs, "
+                "which is how a pattern spelled `net_guard` came to match nothing "
+                "in this repository, ever."
+            )
+            + "\nAdd a retired sentence that only this pattern catches -- the "
+            "sentence a contributor would actually write -- or delete the pattern. "
+            "A pattern nothing depends on is a pattern nobody will notice losing."
         )
 
 
@@ -659,13 +1021,44 @@ def test_every_allowance_is_anchored_in_a_real_document(claim):
     considered), and it has to be text a scanned document really contains
     (otherwise it is a pre-authorised hole waiting for someone to write into).
     Reword a retraction in the docs and this fails here rather than silently
-    widening later."""
+    widening later.
+
+    Containing a banned phrase and occurring somewhere are necessary and nowhere
+    near sufficient: the bare word `cascade` satisfied both, and as an exemption
+    it switched the /cascade/ pattern off everywhere at once. Two more conditions
+    say what a retraction actually looks like. It is WIDER than the phrase it
+    quotes -- a retraction says something about the claim, so an excerpt that is
+    nothing but the matched phrase is not one. And it is not a fragment of the
+    claim itself: if the excerpt fits inside a sentence this guard exists to ban,
+    then writing that sentence anywhere carries its own exemption along with it.
+    Both are checked against `retired_sentences`, so they get stronger as the
+    ratchet does rather than depending on a list of suspicious words."""
     for excerpt in claim.allow_exact:
         needle = normalise(excerpt)
         assert any(p.search(needle) for p in claim.patterns), (
             f"[{claim.slug}] allow_exact entry {excerpt!r} contains none of this "
             "claim's banned phrases, so it exempts nothing. Delete it."
         )
+        for pattern in claim.patterns:
+            for m in pattern.finditer(needle):
+                assert (m.start(), m.end()) != (0, len(needle)), (
+                    f"[{claim.slug}] allow_exact entry {excerpt!r} is nothing but "
+                    f"the banned phrase itself (it is exactly what "
+                    f"/{pattern.pattern}/ matches). An exemption covers every "
+                    "occurrence that lies inside it, so this one exempts the "
+                    "phrase everywhere and switches the pattern off. Quote the "
+                    "sentence that retracts the claim, not the claim."
+                )
+        for sentence in claim.retired_sentences:
+            assert needle not in normalise(sentence), (
+                f"[{claim.slug}] allow_exact entry {excerpt!r} is a fragment of a "
+                f"retired sentence:\n  {sentence!r}\nAn exemption travels with the "
+                "text it quotes, so this one would exempt that sentence wherever "
+                "someone writes it -- the reintroduction arrives pre-authorised. A "
+                "retraction quotes the claim and then says something about it, so "
+                "it is wider than the claim; if yours is narrower, it is not a "
+                "retraction."
+            )
         where = [
             relative for relative in SCOPE
             if (REPO_ROOT / relative).exists() and needle in normalised_document(relative)

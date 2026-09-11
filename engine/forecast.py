@@ -119,7 +119,8 @@ def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
     if n_source < 1:
         raise ValueError(
             "configs/data.yaml engine.forecast_source_windows_per_host must be >= 1, "
-            f"got {n_source} — zero source windows is a forecast about nothing"
+            f"got {n_source} — a cap below 1 leaves every host with no source "
+            "window, which is a forecast about nothing"
         )
 
     context: dict = {}

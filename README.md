@@ -134,7 +134,7 @@ runs are now **bit-identical**, so these numbers are reproducible rather than si
   this a cross-family generalisation test, and also what makes per-class stage metrics
   untrainable ([docs/limitations.md](docs/limitations.md)).
 
-Reading: the shipped headline is the **fused model** (rank-mean of the TGN encoder and
+Reading: the published headline is the **fused model** (rank-mean of the TGN encoder and
 XGBoost): AUROC **0.933**, both attack episodes caught (**median ~70 min**, per-episode ~49 min
 and ~91 min before completion). It is selected for **test-set ranking quality and error
 decorrelation** — *not* on a validation criterion: on best **validation** AUROC the winner would
