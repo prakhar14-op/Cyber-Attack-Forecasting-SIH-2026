@@ -683,6 +683,455 @@ def role_features_degraded_note(result: dict) -> dict | None:
     return {"severity": "warning", "text": ROLE_FEATURES_DEGRADED_TEXT}
 
 
+# ------------------------------------------------------- demo-model provenance
+# A judge who clones this repository has no `artifacts/` (weights are not
+# committed) and no CSE-CIC-IDS-2018, so a second, tiny model can be fitted from
+# the synthetic capture bundled here in order to make the pipeline runnable. That
+# is a useful thing and a dangerous one: every surface below then shows a number
+# produced by a toy, and a number on a page a judge is evaluating is read as a
+# result unless the page says otherwise before the number appears.
+#
+# Nothing in this block infers WHICH model ran. The engine reports that; this
+# block only reads what it reported, and every string here is about provenance,
+# never about performance — there is no measurement of the demo model anywhere in
+# this repository to quote, and inventing one would be the defect these pages
+# exist to prevent.
+
+DEMO_CAPTURE_PATH = "app/assets/synthetic_demo.pcap"
+DEMO_CAPTURE_STEM = "synthetic_demo"
+DEMO_CAPTURE_REGEN_CMD = "python -m capture.make_synthetic_demo"
+# The dataset every published figure was measured on. Named, not sized: the
+# download is not on this machine, so no byte count here could have been checked.
+PUBLISHED_DATASET = "CSE-CIC-IDS-2018"
+
+# Moved out of app/streamlit_app.py verbatim so the provenance block can carry
+# it: on a demo-model run it belongs beside "which model ran", not two sections
+# above it in a box of its own.
+SYNTHETIC_INPUT_TEXT = (
+    "This is a **synthetic, illustrative** capture (not real data, never used for any "
+    "reported metric) — it walks the full kill chain so the demo can show lateral movement "
+    "and exfiltration, which no public dataset contains. See app/assets/README.md."
+)
+
+# ---- the LEAD: what renders, unconditionally and in colour, before any number.
+#
+# These four strings are the whole visible disclosure, and their length is part of
+# the design. An earlier revision of this block ran to 459 words of red before the
+# first metric; measured, not estimated — see
+# tests/test_app.py::test_the_visible_demo_lead_stays_short_enough_to_be_read,
+# which pins the budget so it cannot creep back. A judge does not read 459 words
+# standing at a demo machine, and a disclosure that is not read has failed at the
+# only job it has. Everything that was cut is either an exact restatement of what
+# is still here, or secondary detail, and all of it is still on the page (see
+# provenance_block's `details`).
+DEMO_MODEL_HEADLINE = (
+    "**THE NUMBERS ON THIS PAGE CAME FROM THE DEMO MODEL — NOT FROM THE SYSTEM THIS PROJECT "
+    "REPORTS ON.** Every probability, threshold, alert count and ranking below is "
+    "**not comparable** with any number this project has published."
+)
+# Carries, with DEMO_MODEL_HEADLINE, every fact tests/test_app.py's
+# DEMO_DISCLOSURE_TOKENS demands. Both render on every demo run, unconditionally
+# and in this module's own words: a disclosure whose required content arrives from
+# another module is a disclosure that leaves when that module's wording is next
+# edited.
+DEMO_MODEL_WHAT = (
+    f"**What it is.** A small model fitted on `{DEMO_CAPTURE_PATH}` — invented traffic, "
+    "hand-authored and bundled with this repository (regenerate it with "
+    f"`{DEMO_CAPTURE_REGEN_CMD}`). It has never been trained or scored on "
+    f"{PUBLISHED_DATASET}, which is what every figure this project publishes was measured "
+    "on, and it has no measured accuracy of any kind."
+)
+DEMO_MODEL_WHY = (
+    f"**Why it exists.** {PUBLISHED_DATASET} is far too large to ship inside a repository, and "
+    "the trained weights are not committed either — so without this model a fresh clone could "
+    "not run the pipeline at all."
+)
+DEMO_MODEL_PROHIBITION = (
+    "**Nothing on this page is comparable to any published result.** No probability, threshold, "
+    "alert count, host ranking or feature attribution below reproduces, corroborates or "
+    "approximates any figure in `README.md`, in `docs/`, in the deck, or in the benchmark card "
+    "further down this page. They are **not comparable** with those figures — not a weaker "
+    f"version of them. This model has never been trained on {PUBLISHED_DATASET}, has "
+    "never been scored against a held-out split of it, and has no measured AUROC, no measured "
+    "lead time and no measured false-positive rate — none, not a lower one. Every number here "
+    "is evidence that the code runs, and evidence of nothing else."
+)
+DEMO_MODEL_SELF_SCORING = (
+    "**It is also scoring its own training data.** The input below is that same bundled "
+    "capture, so a high probability here means the model recognises a row it was fitted on — "
+    "not that an attack was detected."
+)
+
+# ---- the DETAILS: the same run, in more words, one click away (never instead).
+# Nothing here is required for a judge to understand that the page is a demo;
+# every item is either the checkable form of a lead fact or a second-order limit
+# on a run that the lead has already declared non-comparable.
+DEMO_MODEL_TEST_NOTE = (
+    "**The same applies to a green test run.** Tests exercised against this demo model show that "
+    "the pipeline works; they are not evidence for any number measured on "
+    f"{PUBLISHED_DATASET}, and the tests that check the published behaviour stay skipped until "
+    "the real artifacts are present."
+)
+DEMO_MODEL_NO_PROVENANCE_LINE = (
+    "The engine reported that this was a demo run but attached no further provenance "
+    "(no model identifier or digest), so this page cannot tell you which demo model it was."
+)
+# The label on the fold. It has to say what is behind it, or it is a fold nobody
+# opens; it must not read as "the important part is in here", because it is not.
+DEMO_DETAILS_LABEL = (
+    "What the engine itself recorded about this demo run, and the other limits on it"
+)
+# The budget the lead is held to, enforced by tests/test_app.py. 200 rather than
+# the ~155 the lead currently measures: room for one more sentence when a real
+# fact needs adding, not room for the wall this replaced.
+DEMO_LEAD_MAX_WORDS = 200
+
+# Marks on the individual surfaces that become actively misleading under the demo
+# model — the ones where a number is either labelled with a measurement word
+# ("1% FPR"), or sits beside a published figure it did not produce.
+DEMO_THRESHOLD_METRIC_LABEL = "Threshold (1% FPR — DEMO model)"
+THRESHOLD_METRIC_LABEL = "Threshold (1% FPR)"
+DEMO_METRICS_MARK = (
+    "Flows and host-windows above are counted from your input. **Alerts** and the **threshold** "
+    "are the demo model's: the threshold is a 1 % false-positive budget over the *synthetic "
+    "capture's* own benign host-windows, so `1% FPR` here is 1 % of invented traffic. It is not "
+    "a false-positive rate on any real network, and it is not the operating point behind any "
+    "published figure."
+)
+# Drawn INTO the figure, for the same reason FORECAST_FIGURE_CAVEAT is: a chart
+# leaves this page as a screenshot, and a screenshot carries no banner with it.
+DEMO_FIGURE_MARK = (
+    "DEMO MODEL — fitted on app/assets/synthetic_demo.pcap. Not the evaluated model; "
+    "no value in this chart is comparable to a published number."
+)
+DEMO_BENCHMARK_MARK = (
+    "**Not one row in this section was produced by the model that scored the page above.** These "
+    f"tables are read from `results/*.json`, written by `eval/` runs on {PUBLISHED_DATASET}. The "
+    "demo model has no row here and cannot be given one — it has never been run against that "
+    "dataset, that split, or these baselines. Reading the numbers above and the numbers below as "
+    "a comparison, a validation or a reproduction is the single mistake this page exists to "
+    "prevent."
+)
+DEMO_FORECAST_MARK = (
+    "**The AUROC and episode figures in the caveat above describe the evaluated k-step heads, "
+    f"measured on {PUBLISHED_DATASET} — not the model that draws the curve below.** Under the "
+    "demo model this panel has no measured ranking quality and no measured lead time at any k: "
+    "it orders the synthetic capture's hosts using a model fitted on that same capture, and "
+    "means nothing beyond that."
+)
+DEMO_EXPLANATION_MARK = (
+    "Under the demo model these attributions explain **the demo model's** decision about invented "
+    "traffic. They are not evidence about how the evaluated model behaves, and this feature "
+    "ranking has been measured against nothing."
+)
+DEMO_GRAPH_MARK = (
+    "Under the demo model, node colour is **the demo model's** score on synthetic traffic — not a "
+    "calibrated probability that a host is under attack."
+)
+
+# How a run summary is read for "which model ran".
+#
+# `engine.predict` resolves an artifact lane per run and reports it as flat
+# fields: `artifact_lane`, `demo_model`, `demo_model_notice`, `demo_model_source`.
+# Those names are used explicitly below where the page needs a specific value.
+#
+# The DETECTOR, though, is deliberately broader than those four names. It was
+# written while that lane was still in flight, and it is kept broad on purpose:
+# the cost of recognising one field too many is an extra disclosure on a run that
+# was already disclosing, and the cost of recognising one too few is a page of toy
+# numbers with no banner at all. tests/test_app.py closes the loop from the other
+# side — it parses engine/predict.py for every demo-shaped field name the engine
+# really ships and fails if this reader cannot see one of them.
+ENGINE_DEMO_FLAG = "demo_model"
+ENGINE_DEMO_NOTICE = "demo_model_notice"
+ENGINE_DEMO_SOURCE = "demo_model_source"
+ENGINE_ARTIFACT_LANE = "artifact_lane"
+DEMO_KEY_TOKEN = "demo"
+# A key whose NAME carries one of these is a statement about the model.
+MODEL_KEY_HINTS = ("model", "weights", "artifact", "booster", "engine", "scorer",
+                   "train", "provenance", "variant")
+# A key whose NAME carries one of these and no model hint is a statement about the
+# INPUT, not about which model scored it. `demo_capture_path` on a real-model run
+# must not raise this banner: a false "you are looking at a toy" is its own false
+# claim, in the opposite direction.
+INPUT_KEY_HINTS = ("capture", "pcap", "pcapng", "input", "upload", "asset", "fixture",
+                   "sample", "file", "path", "dir")
+# String values that a demo-named key uses to say "no".
+DEMO_NEGATIVE_VALUES = frozenset({"", "no", "none", "false", "off", "0", "null", "nil", "n/a"})
+
+
+def _norm_key(text) -> str:
+    """Lowercased, punctuation-free form of a key or value, for substring tests."""
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def is_bundled_demo_capture(input_path) -> bool:
+    """Is this input the synthetic capture bundled in `app/assets`?
+
+    Matched on the stem rather than the full path because the app copies an
+    upload into a session directory under a sanitised name.
+    """
+    return DEMO_CAPTURE_STEM in str(input_path or "")
+
+
+def demo_model_signals(result: dict) -> list[str]:
+    """Every field of a run summary that says the run used the demo model.
+
+    Returned as `key=value` strings rather than a bare boolean so the page can
+    show a judge the machine-readable fact it is reacting to, instead of asking
+    them to trust a banner.
+
+    Two rules, and the asymmetry between them is deliberate:
+
+    * a field whose NAME says "demo" and whose value is `True`, a non-empty
+      non-negative string, or a non-empty dict;
+    * a field whose name names the MODEL (MODEL_KEY_HINTS) and whose string value
+      says "demo" — `model_file="demo_engine_model.json"` is the same statement
+      written the other way round.
+
+    A field that names the INPUT and not the model is skipped under both rules
+    (INPUT_KEY_HINTS): `demo_capture=...` describes the file that was scored, not
+    the model that scored it, and raising the banner on it would put a false
+    statement on the page in the opposite direction from the one it guards.
+    """
+    if not isinstance(result, dict):
+        return []
+    out: list[str] = []
+    for key, value in result.items():
+        name = _norm_key(key)
+        model_ish = any(hint in name for hint in MODEL_KEY_HINTS)
+        if any(hint in name for hint in INPUT_KEY_HINTS) and not model_ish:
+            continue
+        if DEMO_KEY_TOKEN in name:
+            if value is True:
+                out.append(f"{key}=True")
+                continue
+            if isinstance(value, str) and value.strip().lower() not in DEMO_NEGATIVE_VALUES:
+                out.append(f"{key}={value.strip()}")
+                continue
+            if isinstance(value, dict) and value:
+                out.append(f"{key}={json.dumps(value, sort_keys=True, default=str)}")
+                continue
+        if model_ish and isinstance(value, str) and DEMO_KEY_TOKEN in _norm_key(value):
+            out.append(f"{key}={value.strip()}")
+        elif model_ish and isinstance(value, dict):
+            for sub, sub_value in value.items():
+                if DEMO_KEY_TOKEN in _norm_key(sub) and sub_value not in (None, False, "", 0):
+                    out.append(f"{key}.{sub}={sub_value}")
+    return sorted(out)
+
+
+def is_demo_model_run(result: dict) -> bool:
+    """Did this run score with the demo model? (see demo_model_signals)"""
+    return bool(demo_model_signals(result))
+
+
+def engine_demo_notice(result: dict) -> str | None:
+    """`engine.predict`'s OWN statement about this demo run, or None.
+
+    The engine writes DEMO_MODEL_NOTICE into every demo result specifically so
+    that whatever puts text in front of a human can show it, and the page renders
+    it verbatim for the same reason the k-step panel renders `forecast_caveat`
+    verbatim: if the engine's statement about its own lane changes, the page
+    changes with it instead of reciting a constant that has quietly gone stale.
+
+    It is shown ALONGSIDE this module's own wording, never instead of it — a
+    disclosure that exists only because another module supplied a string is a
+    disclosure that disappears the day that module stops supplying it.
+    """
+    notice = result.get(ENGINE_DEMO_NOTICE)
+    if isinstance(notice, str) and notice.strip():
+        return notice.strip()
+    return None
+
+
+def without_repeated_demo_notice(text: str | None, result: dict) -> str | None:
+    """`text` with the engine's demo notice removed, when the page already shows it.
+
+    `engine.forecast` prepends the same DEMO_MODEL_NOTICE to its `forecast_caveat`
+    on a demo run, which is right of it — that string travels on its own. But the
+    page already renders that notice verbatim, in the provenance block's details
+    fold at the top, and the k-step caption is a screen below it: printed twice,
+    the second copy teaches a reader that this page repeats itself, and the half
+    of the caveat that is NOT the notice — the forward-forecast finding — is what
+    gets skimmed past. Nothing is lost to a reader who never opens the fold: the
+    k-step section's own DEMO_FORECAST_MARK, directly under its header, already
+    says the curve below it was drawn by the demo model.
+
+    Only an EXACT occurrence of the notice this run reported is removed, and only
+    when that notice is on the page. Nothing is summarised, nothing is shortened,
+    and a caveat that is nothing but the notice returns None rather than an empty
+    caption.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    notice = engine_demo_notice(result)
+    if notice:
+        text = text.replace(notice, " ")
+    text = text.strip()
+    return text or None
+
+
+def _short(value, limit: int = 60) -> str:
+    text = " ".join(str(value).split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def demo_provenance_line(result: dict) -> str:
+    """Which lane, and what it says it was fitted from — the checkable part.
+
+    A judge should be able to test the banner rather than take it on trust, so the
+    engine's own machine-readable fields are printed. When the engine said only
+    "this was a demo run" and named neither lane nor source, that is what is
+    shown: the page does not manufacture an identifier it was not given.
+
+    Long values are elided here because the load-bearing strings (the engine's
+    notice above all) are rendered in full elsewhere in the same block; this line
+    is a reference, not a second copy.
+    """
+    signals = demo_model_signals(result)
+    if not signals:
+        return ""
+    known = []
+    lane = result.get(ENGINE_ARTIFACT_LANE)
+    if isinstance(lane, str) and lane.strip():
+        known.append(f"artifact lane `{lane.strip()}`")
+    source = result.get(ENGINE_DEMO_SOURCE)
+    if isinstance(source, str) and source.strip():
+        known.append(f"fitted from `{source.strip()}`, as that lane declares it")
+    if known:
+        return "Recorded by the engine as " + "; ".join(known) + "."
+    return (DEMO_MODEL_NO_PROVENANCE_LINE + " Engine fields: "
+            + ", ".join(f"`{_short(s)}`" for s in signals) + ".")
+
+
+def threshold_metric_label(result: dict) -> str:
+    """The alert-threshold metric's label, carrying which model set it.
+
+    The label is the mark, not a caption under it: `Threshold (1% FPR)` reads as a
+    measured operating point, and on a demo run the budget was fitted over the
+    synthetic capture's own benign windows.
+    """
+    return DEMO_THRESHOLD_METRIC_LABEL if is_demo_model_run(result) else THRESHOLD_METRIC_LABEL
+
+
+def demo_figure_mark(result: dict) -> str:
+    """DEMO_FIGURE_MARK when the demo model scored this run, else "".
+
+    Returned as a string the caller draws into the figure, so the mark travels
+    inside the PNG rather than living in a caption beside it.
+    """
+    return DEMO_FIGURE_MARK if is_demo_model_run(result) else ""
+
+
+def provenance_block(result: dict, input_path=None) -> dict | None:
+    """The ONE block that says what produced the numbers on this page.
+
+    `{severity, text, details, demo}` or None. `text` is the coloured box that
+    renders before the first number; `details` is the same run in more words,
+    behind a fold (DEMO_DETAILS_LABEL), and is `""` unless there is more to say.
+
+    This is the consolidation the page needs as much as it needs the disclosure.
+    Three separate coloured boxes saying three overlapping things about provenance
+    read as a project that does not work, and a judge who learns to scroll past
+    the first one scrolls past all three. The same is true inside one box: the
+    first version of this block put 459 measured words of red above the metric
+    row, three of its seven paragraphs restating the other four.
+
+    MERGED INTO THE ONE BOX, and stated once each:
+
+    * which model scored the run (the demo model, if it was);
+    * that the INPUT is the bundled synthetic capture — on a demo run these two
+      compound into a fact neither states alone (DEMO_MODEL_SELF_SCORING), which
+      is why merging them adds meaning rather than saving space;
+    * that the run had no anonymisation key. On a run the lead has NOT declared a
+      demo, this stays in the visible box, verbatim as ROLE_FEATURES_DEGRADED_TEXT
+      so its mechanism and its fix survive the merge; on a demo run it moves into
+      `details`, because "two features are zero, so these scores differ from the
+      published ones" adds nothing a reader can act on once the box above it has
+      said that no number here is comparable to a published one at all.
+
+    MOVED BEHIND THE FOLD, never dropped: `engine.predict`'s own notice (an exact
+    restatement of the lead, kept verbatim so the page tracks the engine rather
+    than reciting a constant that may have gone stale), DEMO_MODEL_PROHIBITION,
+    DEMO_MODEL_TEST_NOTE and the machine-readable provenance line. None of them
+    is needed to know the page is a demo; each is what a judge reaches for when
+    they want to check that claim rather than accept it.
+
+    NOT MERGED AT ALL, and still in its own place on the page: the frame-coverage
+    note (about what the PARSER read, with its own fix, and the one thing stopping
+    "0 alerts" being read as a quiet network), the benchmark population caveat and
+    the k-step forecast caveat (both quote docs/limitations.md and are true under
+    the evaluated model too, so folding them into a demo-run block would make them
+    look conditional on the demo).
+    """
+    demo = demo_model_signals(result)
+    synthetic_input = is_bundled_demo_capture(input_path)
+    role = role_features_degraded_note(result if isinstance(result, dict) else {})
+
+    lead: list[str] = []
+    details: list[str] = []
+    if demo:
+        lead += [DEMO_MODEL_HEADLINE, DEMO_MODEL_WHAT, DEMO_MODEL_WHY]
+        if synthetic_input:
+            lead.append(DEMO_MODEL_SELF_SCORING)
+        notice = engine_demo_notice(result)
+        if notice:
+            details.append(f"**`engine.predict` states:** {notice}")
+        details += [DEMO_MODEL_PROHIBITION, DEMO_MODEL_TEST_NOTE,
+                    demo_provenance_line(result)]
+        if role:
+            details.append(role["text"])
+    else:
+        if synthetic_input:
+            lead.append(SYNTHETIC_INPUT_TEXT)
+        if role:
+            lead.append(role["text"])
+
+    lead = [c for c in lead if c]
+    if not lead:
+        return None
+    return {"severity": "warning" if (demo or role) else "info",
+            "text": "\n\n".join(lead),
+            "details": "\n\n".join(c for c in details if c),
+            "demo": bool(demo)}
+
+
+def benchmark_caveats(result: dict, has_rows: bool) -> list[str]:
+    """The warnings section 6 should render above its tables, in order.
+
+    Both are about how to read ROWS, so neither is rendered when there are none —
+    and on a fresh clone, which is the machine this whole demo lane exists for,
+    there are none: `results/*.json` is gitignored, both frames come back empty
+    and the section shows BENCHMARK_EMPTY_HINT instead. Before this check, that
+    section rendered three coloured boxes and zero results (measured on a real
+    demo-lane run), which is the shape that makes a judge read a working project
+    as a broken one. Suppressing them there costs nothing: a caveat exists to stop
+    a number being misread, and there is no number.
+
+    When there ARE rows, both render, and they stay two boxes rather than one:
+
+    * BENCHMARK_CAVEAT is about the POPULATION behind the figures (n = 2 sessions,
+      subsampled benign traffic) and is quoted from `docs/limitations.md` — it is
+      equally true on a run of the published model, and tests/test_app.py pins its
+      wording against that document.
+    * DEMO_BENCHMARK_MARK is about WHICH MODEL produced them, and only fires on a
+      demo run. Folding it into the other would either make the population caveat
+      read as conditional on the demo, or put a demo-only sentence into a constant
+      that is pinned to a document about the evaluated system.
+
+    This is the one place on the page where a demo-model number and a published
+    number sit within a screen of each other, which is why it keeps the stronger
+    of the two treatments available to it.
+    """
+    if not has_rows:
+        return []
+    caveats = [BENCHMARK_CAVEAT]
+    if is_demo_model_run(result):
+        caveats.append(DEMO_BENCHMARK_MARK)
+    return caveats
+
+
 def coverage_note(result: dict) -> dict | None:
     """`{severity, text}` for frames the parser could not read, or None.
 

@@ -16,6 +16,61 @@ paths:
   splits: data/splits.yaml
   fixture_csv: tests/fixtures/mini.csv
 
+# The DEMO LANE — a second, clearly-separated set of engine artifacts fitted by
+# scripts/bootstrap_demo_artifacts.py from the small synthetic capture that
+# ships in this repository, so that a fresh clone with no `artifacts/` and no
+# dataset can still execute the pipeline end to end.
+#
+# It is NOT the published model and nothing it outputs is comparable to a
+# published number: it is fitted on one 454-second hand-authored capture and
+# its thresholds are chosen on the same rows, so it has memorised that capture.
+# The separation is enforced in code, not only here:
+#   - `artifacts_dir` is never `paths.artifacts_dir`, and the bootstrap refuses
+#     to run if the target is the published directory or already holds published
+#     weights;
+#   - the persisted thresholds carry `artifact_lane: demo`, and
+#     engine/thresholds.py refuses to serve that lane from any directory but
+#     this one — so copying the demo lane into `artifacts/` fails loudly;
+#   - `model_prefix` keeps every demo weight file out of the name set
+#     tests/_stubs.py `engine_artifacts_present()` gates the end-to-end tests on,
+#     so building this lane cannot turn those skips green.
+demo:
+  artifacts_dir: artifacts_demo
+  pcap: app/assets/synthetic_demo.pcap
+  operator_log: app/assets/synthetic_demo.operator-log.txt
+  # Filename prefix for every demo weight. Changing it to "" would collide with
+  # the published weight names; tests/test_demo_bootstrap.py pins that it does
+  # not, so the collision fails the suite instead of passing silently.
+  model_prefix: demo_
+  # Own seed, not `seed` above: the demo fit is reproducible independently of
+  # any retuning of the dataset pipeline's seed.
+  seed: 1337
+  # OpenMP threads for the fit. Seeding alone does NOT make the saved weights
+  # byte-identical: models/baselines.py builds the head with n_jobs=-1, and
+  # XGBoost's parallel histogram build depends on the thread count. MEASURED on
+  # the real demo matrix (174 host-windows x 30 features), same seed, only this
+  # value moving — demo_engine_model.json was
+  #   d428729d3562...  at fit_threads: 1
+  #   1003f2454f32...  at fit_threads: 4
+  #   bc7fdd07d9dc...  at this machine's 12 cores (cpu_count 12)
+  # while window_scaler.pkl was 9f8351d521f3... at every one of them, being a
+  # single-threaded sklearn pickle. 1 makes the bytes a property of the capture
+  # rather than of the machine's core count.
+  #
+  # THE PIN ONLY BINDS IN A PROCESS THAT HAS NOT YET IMPORTED XGBOOST. OpenMP
+  # fixes the thread count at that import, so this value reaches the fit only
+  # when `scripts/bootstrap_demo_artifacts.py` runs as a script. Measured this
+  # session: in a process that did a bare `import xgboost` first, fit_threads 1
+  # and 4 BOTH produced bc7fdd07d9dc... — the machine's default — while the lane
+  # would have recorded the number it was asked for. The script detects that and
+  # refuses rather than recording a thread count it did not apply; a lane built
+  # any other way carries `weights_reproducible: false`.
+  #
+  # The pin is an environment variable, so `bootstrap` restores whatever was
+  # there when it returns. It must reach OpenMP, but it must not outlive the fit
+  # and re-thread a test suite that called this in-process.
+  fit_threads: 1
+
 dataset:
   name: cse-cic-ids2018
   s3_bucket: s3://cse-cic-ids2018

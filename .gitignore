@@ -13,6 +13,42 @@ data/processed/
 artifacts/
 results/
 
+# The DEMO artifact lane (scripts/bootstrap_demo_artifacts.py). Ignored, and the
+# case is close enough to be worth writing down.
+#
+# FOR COMMITTING IT: the whole problem this lane solves is that a judge clones
+# the repository and cannot run anything. A lane that only exists after someone
+# runs a script they were never told about solves that problem only for people
+# who read scripts/. Committing it would make the app work on a bare clone with
+# no step in between, and the capture the weights are fitted from is committed
+# already, so nothing unreproducible enters the tree.
+#
+# AGAINST, and this is what wins: CLAUDE.md forbids committing weights, and the
+# exception it grants is for the synthetic pcap, not for models fitted from it.
+# More concretely — committed demo weights would be the ONLY model files in the
+# tree, in a repository whose README quotes AUROC figures measured on a model
+# that is not here. `demo_engine_model.json` sitting in git, with a README
+# reporting 0.933, is precisely the confusion the rest of this lane's design
+# exists to prevent, and no amount of naming fixes a file that is simply there.
+#
+# THE NUMBERS, RE-MEASURED THIS SESSION, because the version of this note that
+# was inherited had both of them wrong and they pointed the wrong way. It said
+# "nine committed files (~200 KB, measured)". The built lane is TWELVE files and
+# 1,090,206 bytes — 1.04 MiB, five times the figure quoted — because eight
+# XGBoost head files of ~135 KB each dominate it, not the small JSON. And the
+# cost of NOT committing it is one command, timed twice here at 15.2 s and
+# 17.3 s (`python scripts/bootstrap_demo_artifacts.py`, wall clock, on a machine
+# shared with other work), not the 44.7 s that was written down. So the trade is
+# "1 MiB of model files in git, forever, in a repository that must not contain
+# model files" against "about fifteen seconds, once". Both corrections make the
+# case for ignoring it stronger than the note claimed.
+#
+# That command must therefore be put in front of the judge rather than left to
+# be discovered — in README.md and docs/INSTALL.md, both of which belong to the
+# orchestrator (see needs_orchestrator). If it does not appear there, this
+# decision is wrong and the lane should be committed instead.
+artifacts_demo/
+
 # Offline wheel-house (rebuilt by scripts/build_vendor.ps1; too large for git)
 vendor/*.whl
 vendor/*.tar.gz

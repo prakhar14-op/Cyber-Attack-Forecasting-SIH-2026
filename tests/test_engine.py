@@ -57,6 +57,7 @@ def test_output_schema_rejects_embedding_dimensions():
         "top_windows": [{"window_start": 5.0, "probability": 0.8, "seconds_before_alert": 5.0}],
         "flagged_flows": [{"dst_port": 80, "protocol": 6, "bytes": 500, "syn": 1,
                            "duration_us": 1200.0}],
+        "demo_model": False,
     }
     _validate(good)  # must not raise
 
@@ -67,6 +68,16 @@ def test_output_schema_rejects_embedding_dimensions():
     bad2 = dict(good, top_features=[{"value": 1.0, "contribution": 0.2}])  # no 'feature' name
     with pytest.raises(Exception):
         _validate(bad2)
+
+    # A forecast that does not say which lane of weights produced it is not a
+    # valid forecast. forecasts.json is an array that gets read on its own, so
+    # "which model said this" cannot live only in the run summary beside it.
+    anonymous = {k: v for k, v in good.items() if k != "demo_model"}
+    with pytest.raises(Exception):
+        _validate(anonymous)
+    _validate(dict(good, demo_model=True))  # the demo lane's objects validate too
+    with pytest.raises(Exception):  # ... but the flag is a boolean, not prose
+        _validate(dict(good, demo_model="no"))
 
 
 @pytest.mark.skipif(
@@ -514,7 +525,7 @@ def test_unclassified_is_honest_in_the_schema_and_the_technique_map(data_cfg):
     obj = {"host": "10.0.0.5", "window_start": 10.0, "probability": 0.9,
            "stage": UNCLASSIFIED_STAGE, "technique": None, "technique_name": "",
            "top_features": [{"feature": "syn", "value": 1.0, "contribution": 0.1}],
-           "top_windows": [], "flagged_flows": []}
+           "top_windows": [], "flagged_flows": [], "demo_model": False}
     _validate(obj)  # an unclassified alert must still validate
 
     with pytest.raises(Exception):  # ... and an invented stage must not
@@ -710,11 +721,18 @@ class _StubShap:
 def artifact_free_engine(monkeypatch):
     """Run the REAL predict.predict_file on a machine with no artifacts/.
 
-    Only the four seams that read a trained artifact are stubbed — the
-    model+scaler loader (`_load_engine`), the persisted threshold, the
+    Only the seams that read a trained artifact are stubbed — the model+scaler
+    loader (`_load_engine`), the persisted model spec and threshold, the
     weight-digest check and the TreeSHAP explainer. Feature extraction,
     thresholding, the stage rules, the technique map, schema validation, the
     ledger and EVERY write into out_dir are the production path.
+
+    Stubbing `load_model_spec` is also what pins these runs to the PUBLISHED lane:
+    `resolve_artifact_lane` asks the published thresholds for the variant, so a
+    stub that answers is a published bundle as far as the engine is concerned.
+    Without it these tests would silently change lane on a machine where the demo
+    lane happens to be bootstrapped, and would assert against demo output while
+    claiming to be artifact-free. The demo lane has its own tests below.
 
     This exists because the alternative — a test that calls predict.py's helpers
     directly — let the `_write_run_summary` call site be deleted from
@@ -736,6 +754,9 @@ def artifact_free_engine(monkeypatch):
     stub = _StubEngine()
     monkeypatch.setattr(predict, "_load_engine",
                         lambda cfg, variant: (stub, stub, "engine_model.json"))
+    monkeypatch.setattr(TH, "load_model_spec",
+                        lambda cfg, variant: {"file": "engine_model.json",
+                                              "val_auroc": 0.5})
     monkeypatch.setattr(TH, "load_threshold",
                         lambda cfg, fpr_budget, variant="full": _StubEngine.threshold)
     monkeypatch.setattr(VW, "verify", lambda *a, **k: (True, None))
@@ -925,3 +946,753 @@ def test_top_contributing_windows_ranks_and_bounds_context():
     assert top[0]["seconds_before_alert"] == 40 and top[1]["seconds_before_alert"] == 0
     # the future window (120) and the out-of-context one (20) are excluded
     assert all(40 <= w["window_start"] <= 100 for w in top)
+
+
+# ==========================================================================
+# ARTIFACT LANES: the published engine vs the demo model a fresh clone can fit
+# ==========================================================================
+# engine/predict.py resolves which weights a run loads. The published lane must
+# keep absolute priority, the demo lane must never shadow it, a half-installed
+# lane of either kind must fail loudly instead of becoming the other one, and
+# every result of a demo run must say so IN ITS DATA.
+#
+# These tests build their own lanes under tmp_path - a real (tiny) XGBoost model,
+# a real scaler, a real threshold file, a real SHA-256 record - so they run on a
+# bare clone, on the demo machine and on a machine with the published bundle
+# alike, and assert the same thing in all three. Nothing here asserts a
+# probability, an AUROC or a detection: passing these is evidence about LABELLING
+# and REFUSAL, never about model quality. That is the point - a test that passes
+# against a toy model must not be readable as evidence for a number measured on
+# CSE-CIC-IDS-2018.
+
+DEMO_NOWCAST_FULL = "demo_engine_model.json"
+DEMO_NOWCAST_FLOW = "demo_engine_model_flow.json"
+
+
+def _verify_weights_module():
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+    import verify_weights as VW
+
+    return VW
+
+
+def _tiny_booster(n_features: int, seed: int = 0):
+    """A real XGBClassifier, small and seeded. Real because the point is to drive
+    the production loader (`xgb.XGBClassifier().load_model`) and the production
+    TreeSHAP explainer, not a stub of either."""
+    import xgboost as xgb
+
+    rng = np.random.default_rng(seed)
+    X = rng.normal(size=(64, n_features)).astype(np.float32)
+    y = (X[:, 0] > 0).astype(int)
+    model = xgb.XGBClassifier(n_estimators=4, max_depth=2, tree_method="hist",
+                              eval_metric="logloss")
+    model.fit(X, y)
+    return model
+
+
+def _write_scaler(path, n_features: int) -> None:
+    import pickle
+
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.default_rng(1)
+    scaler = StandardScaler().fit(rng.normal(size=(64, n_features)))
+    with open(path, "wb") as fh:
+        pickle.dump(scaler, fh)
+
+
+def _two_lane_cfg(data_cfg, published_dir, demo_dir) -> dict:
+    """The real config with both lanes pointed into tmp_path."""
+    return {
+        **data_cfg,
+        "paths": {**data_cfg["paths"], "artifacts_dir": str(published_dir)},
+        "demo": {**data_cfg.get("demo", {}), "artifacts_dir": str(demo_dir)},
+    }
+
+
+def _stub_lane_files(directory, lane, *, threshold=True, scaler=True) -> None:
+    """The two files lane resolution looks at, without fitting anything.
+
+    `lane` is written into the persisted thresholds exactly as
+    engine/thresholds.py spells it, because that field is what declares a lane.
+    Pass None to write a threshold file with no declaration at all.
+    """
+    import json as _json
+
+    from engine import thresholds as TH
+
+    directory.mkdir(parents=True, exist_ok=True)
+    if threshold:
+        body = {"full": {"file": "x.json", "fpr_0.01": 0.5},
+                "flow": {"file": "x.json", "fpr_0.01": 0.5}}
+        if lane is not None:
+            body[TH.LANE_FIELD] = lane
+        (directory / "engine_threshold.json").write_text(
+            _json.dumps(body), encoding="utf-8")
+    if scaler:
+        (directory / "window_scaler.pkl").write_bytes(b"")
+
+
+def _build_demo_lane(cfg, demo_dir, *, threshold_value: float = 0.0,
+                     horizons=(), source="app/assets/synthetic_demo.pcap") -> dict:
+    """A COMPLETE demo lane under tmp_path: real weights, real scaler, real
+    threshold file. The digest record is written separately, by
+    scripts/verify_weights.py, because that is the production path.
+
+    `threshold_value` defaults to 0.0 so every scored window alerts. That makes
+    the alert path, the forecast objects and the ledger deterministic for a
+    plumbing test; it is an operating point chosen FOR the test, and nothing here
+    reads it as a measurement.
+    """
+    import json as _json
+
+    from data import windows as W
+    from engine import thresholds as TH
+
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    columns = W.feature_columns(cfg)
+    _write_scaler(demo_dir / "window_scaler.pkl", len(columns))
+
+    persisted = {
+        TH.LANE_FIELD: TH.DEMO_LANE,
+        "model": "xgb",
+        "features": columns,
+        "demo_provenance": {"source_capture": source},
+    }
+    for tag, base in (("full", DEMO_NOWCAST_FULL), ("flow", DEMO_NOWCAST_FLOW)):
+        for horizon in (0, *horizons):
+            name = base if horizon == 0 else base.replace(".json", "_k%d.json" % horizon)
+            _tiny_booster(len(columns), seed=horizon).save_model(str(demo_dir / name))
+            persisted[TH.horizon_variant(tag, horizon)] = {
+                "file": name, "horizon": horizon,
+                "in_sample_auroc": 1.0, "auroc_is_in_sample": True,
+                "fpr_0.01": threshold_value, "fpr_0.001": threshold_value,
+            }
+    (demo_dir / "engine_threshold.json").write_text(
+        _json.dumps(persisted, indent=2), encoding="utf-8")
+    return persisted
+
+
+def _small_input(fixture_csv, tmp_path, rows: int = 40):
+    """The head of the committed fixture, as its own CSV.
+
+    The same loader, the same schema, the same code path - fewer rows, because
+    these tests drive the REAL TreeSHAP explainer at an alert threshold of 0.0
+    (every window alerts, which is what makes the ledger deterministic) and
+    explaining a thousand flows' worth of windows costs a minute per test for no
+    extra coverage. Nothing here asserts a count.
+
+    40 rows is still 591 host-windows and 591 alerts on the committed fixture
+    (measured this session), so every labelling assertion below has hundreds of
+    objects to be true of; 120 rows bought 977 and cost roughly half as much
+    again per test.
+    """
+    lines = fixture_csv.read_text(encoding="utf-8").splitlines()[:rows + 1]
+    small = tmp_path / "small.csv"
+    small.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    return small
+
+
+@pytest.fixture
+def demo_lane(data_cfg, tmp_path, monkeypatch):
+    """A built demo lane, with `engine.predict` and `engine.forecast` pointed at
+    it and no published bundle in sight. Yields (cfg, published_dir, demo_dir).
+
+    Nowcast heads only; `_add_horizon_heads` adds the k-step ones for the two
+    tests that need them. Everything downstream of the config is the production
+    path: the real resolver, the real loader, the real digest check, the real
+    TreeSHAP explainer, the real ledger.
+    """
+    from configs import load_config as _load_config
+    from engine import forecast as FC
+    from engine import predict as P
+
+    published_dir = tmp_path / "artifacts"
+    demo_dir = tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published_dir, demo_dir)
+    _build_demo_lane(cfg, demo_dir)
+    _verify_weights_module().record(P._lane_cfg(cfg, demo_dir))
+
+    monkeypatch.setattr(P, "load_config",
+                        lambda name: cfg if name == "data" else _load_config(name))
+    monkeypatch.setattr(FC, "load_config",
+                        lambda name: cfg if name == "data" else _load_config(name))
+    return cfg, published_dir, demo_dir
+
+
+def _add_horizon_heads(cfg, demo_dir, threshold_value: float = 0.0) -> list:
+    """Fit and persist this demo lane's k-step heads, for the forecast tests.
+
+    Separate from the fixture because the k-step heads cost a model fit each and
+    only two tests read them; the digest record is untouched because the k-step
+    weights are not digest-tracked in either lane (engine/forecast.py says so).
+    """
+    import json as _json
+
+    from data import windows as W
+    from engine import thresholds as TH
+
+    horizons = [int(k) for k in cfg["engine"]["forecast_horizons"]]
+    path = demo_dir / "engine_threshold.json"
+    persisted = _json.loads(path.read_text(encoding="utf-8"))
+    n_features = len(W.feature_columns(cfg))
+    for tag, base in (("full", DEMO_NOWCAST_FULL), ("flow", DEMO_NOWCAST_FLOW)):
+        for horizon in horizons:
+            name = base.replace(".json", "_k%d.json" % horizon)
+            _tiny_booster(n_features, seed=horizon).save_model(str(demo_dir / name))
+            persisted[TH.horizon_variant(tag, horizon)] = {
+                "file": name, "horizon": horizon,
+                "in_sample_auroc": 1.0, "auroc_is_in_sample": True,
+                "fpr_0.01": threshold_value, "fpr_0.001": threshold_value,
+            }
+    path.write_text(_json.dumps(persisted, indent=2), encoding="utf-8")
+    return horizons
+
+
+# -- lane resolution -------------------------------------------------------
+
+def test_the_published_lane_wins_even_with_a_demo_lane_sitting_beside_it(
+        data_cfg, tmp_path):
+    """Priority, as a test. A complete demo lane next to a usable published one
+    changes nothing: the run loads the published weights and never looks at the
+    demo directory.
+
+    FALSIFIABLE: swap the order in resolve_artifact_lane so the demo lane is
+    consulted first - the plausible edit, since "prefer the lane we just built"
+    is what makes a fresh clone work - and this fails on both variants.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+    _stub_lane_files(published, TH.PUBLISHED_LANE)
+    _stub_lane_files(demo, TH.DEMO_LANE)
+
+    for variant in ("full", "flow"):
+        lane = P.resolve_artifact_lane(cfg, variant)
+        assert lane.name == TH.PUBLISHED_LANE and lane.demo is False
+        assert lane.dir == published.resolve(), (
+            "a demo lane at %s shadowed the published artifacts at %s" % (demo, published))
+        assert lane.notice is None
+
+
+def test_the_demo_lane_is_used_only_when_the_published_thresholds_are_absent(
+        data_cfg, tmp_path):
+    """The fallback itself: with no published bundle, a complete self-declared
+    demo lane is resolved, carries the notice, and hands downstream a config
+    pointed at its own directory.
+
+    FALSIFIABLE: delete the `_demo_lane(cfg)` call at the end of
+    resolve_artifact_lane (returning `published` unconditionally) and every
+    assertion here fails.
+    """
+    from configs import resolve_path
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+    _stub_lane_files(demo, TH.DEMO_LANE)
+
+    lane = P.resolve_artifact_lane(cfg, "flow")
+    assert lane.name == TH.DEMO_LANE and lane.demo is True
+    assert lane.dir == demo.resolve()
+    assert lane.notice == P.DEMO_MODEL_NOTICE
+    # the lane travels as a config, so thresholds / verify_weights / _load_engine
+    # all read the same directory without being told about lanes at all
+    assert resolve_path(lane.cfg["paths"]["artifacts_dir"]) == demo.resolve()
+
+
+@pytest.mark.parametrize("leftover", [
+    ("window_scaler.pkl",),
+    ("engine_model.json", "engine_model_flow.json"),
+    ("engine_model_flow.json",),
+    ("engine_model.json", "window_scaler.pkl"),
+])
+def test_a_half_installed_published_bundle_refuses_instead_of_running_the_demo_model(
+        data_cfg, tmp_path, leftover):
+    """The failure this whole design exists to prevent: part of a published
+    bundle is on disk and the run quietly becomes a demo run that looks normal.
+
+    Every partial state is the same refusal, because the ways a bundle ends up
+    partial are not all the same: a deleted threshold file leaves the scaler, and
+    an interrupted release download leaves the weight files and nothing else.
+
+    MEASURED IN THIS SESSION: before scripts/verify_weights.PUBLISHED_NOWCAST_WEIGHTS
+    was added to `_published_lane_files`, the second case here - both published
+    weight files present, no threshold, no scaler - resolved to lane='demo' and
+    ran. The guard looked only at the threshold file and the scaler, so the two
+    files a judge is most likely to have half-downloaded were invisible to it.
+
+    FALSIFIABLE, two ways:
+      * delete the `strays` check in resolve_artifact_lane -> every case returns
+        a demo lane instead of raising;
+      * narrow `_published_lane_files` back to `_lane_core_files` -> the
+        weight-file-only cases fall through to the demo lane again, which is
+        exactly the bug this parametrisation was added for.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+    _stub_lane_files(demo, TH.DEMO_LANE)
+
+    published.mkdir(parents=True, exist_ok=True)
+    for name in leftover:
+        (published / name).write_bytes(b"not a real weight file")
+
+    with pytest.raises(RuntimeError, match="INCOMPLETE") as exc:
+        P.resolve_artifact_lane(cfg, "flow")
+    for name in leftover:
+        assert name in str(exc.value), (
+            "the refusal must name the published file it found, so whoever reads it "
+            "knows which bundle went missing")
+
+
+def test_the_published_file_names_come_from_the_module_that_attests_them(data_cfg):
+    """`_published_lane_files` must not keep its own spelling of the published
+    weight filenames. engine/predict.py uses them to DETECT a half-installed
+    bundle and scripts/verify_weights.py uses them to ATTEST one; two copies that
+    drift means one module treating a file as published evidence while the other
+    cannot see it.
+
+    FALSIFIABLE: inline the names as literals in engine/predict.py and rename one
+    in scripts/verify_weights.py - this fails, where the drift would otherwise be
+    invisible until a partial bundle silently ran as a demo.
+    """
+    from engine import predict as P
+
+    VW = _verify_weights_module()
+    names = P._published_lane_files(data_cfg)
+
+    assert set(VW.PUBLISHED_NOWCAST_WEIGHTS) <= set(names)
+    assert set(VW.PUBLISHED_NOWCAST_WEIGHTS) <= set(VW.TRACKED), (
+        "the published nowcast weights must stay inside the digest-tracked list")
+    assert "engine_threshold.json" in names and "window_scaler.pkl" in names
+
+
+def test_a_demo_directory_that_does_not_declare_itself_demo_is_refused(
+        data_cfg, tmp_path):
+    """A directory is not a demo lane because of where it sits; it is one because
+    its persisted thresholds say so. Editing that declaration away - the obvious
+    way to dress demo weights up as published ones - must fail the run.
+
+    FALSIFIABLE: drop the `declared != TH.DEMO_LANE` check in `_demo_lane` and
+    both cases below resolve happily, reporting demo weights as published.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+
+    _stub_lane_files(demo, TH.PUBLISHED_LANE)  # declaration flipped
+    with pytest.raises(RuntimeError, match="declares lane"):
+        P.resolve_artifact_lane(cfg, "flow")
+
+    _stub_lane_files(demo, None)  # declaration deleted entirely
+    with pytest.raises(RuntimeError, match="declares lane"):
+        P.resolve_artifact_lane(cfg, "flow")
+
+
+def test_a_half_written_demo_lane_is_refused_rather_than_skipped(data_cfg, tmp_path):
+    """A bootstrap that died halfway must not read downstream as "no artifacts
+    were ever built" - that sends whoever is looking at it to the wrong fix.
+
+    FALSIFIABLE: turn the incompleteness branch in `_demo_lane` into `return None`
+    and this raises the ordinary missing-artifacts FileNotFoundError instead of
+    naming the half-written lane.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+    _stub_lane_files(demo, TH.DEMO_LANE, scaler=False)
+
+    with pytest.raises(RuntimeError, match="demo artifact lane.*INCOMPLETE"):
+        P.resolve_artifact_lane(cfg, "flow")
+
+
+def test_one_directory_cannot_be_both_lanes(data_cfg, tmp_path):
+    """If the two configured directories are the same, every run out of it would
+    be reported as published whatever it holds. That is a config error, and it is
+    refused before anything is loaded.
+
+    FALSIFIABLE: remove the equality check and the run reports lane 'published'
+    while loading whatever is in the shared directory.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    both = tmp_path / "artifacts"
+    cfg = _two_lane_cfg(data_cfg, both, both)
+    _stub_lane_files(both, TH.DEMO_LANE)
+
+    with pytest.raises(RuntimeError, match="same directory"):
+        P.resolve_artifact_lane(cfg, "flow")
+
+
+def test_with_no_lane_at_all_the_missing_artifact_error_is_unchanged(
+        data_cfg, tmp_path):
+    """A bare clone has no published bundle and no demo lane. That is not a
+    demo-lane problem, so resolution returns the published lane untouched and the
+    existing "run engine.train_engine / fetch the release" error is what the
+    operator sees.
+
+    FALSIFIABLE: make resolve_artifact_lane raise its own error for the empty
+    case and the message a bare clone gets stops naming the fix.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    published, demo = tmp_path / "artifacts", tmp_path / "demo"
+    cfg = _two_lane_cfg(data_cfg, published, demo)
+
+    lane = P.resolve_artifact_lane(cfg, "flow")
+    assert lane.name == TH.PUBLISHED_LANE and lane.demo is False
+
+    with pytest.raises(FileNotFoundError, match="engine_threshold"):
+        TH.load_model_spec(lane.cfg, "flow")
+
+
+def test_the_demo_lane_directory_is_one_place_in_the_config(data_cfg):
+    """engine/predict.py and engine/thresholds.py must look for the demo lane in
+    the SAME directory. Two answers here is a lane one module loads and the other
+    disowns, and the symptom would be a demo run reported as published.
+
+    FALSIFIABLE: point `demo_lane_dir` at anything else - a different config key,
+    a sibling of the published directory - and this fails.
+    """
+    from engine import predict as P
+    from engine import thresholds as TH
+
+    assert P.demo_lane_dir(data_cfg) == TH._demo_artifacts_dir(data_cfg)
+    assert P.demo_lane_dir({"paths": data_cfg["paths"]}) is None, (
+        "a config with no demo block must yield no demo lane, not a guess")
+
+
+def test_the_demo_notice_states_what_the_run_is_not():
+    """The honesty constraint as a test, in the same spirit as
+    test_forecast_engine.py's caveat test. The notice travels in the result dict,
+    in run_summary.json and in the k-step block, so softening it must break the
+    build rather than only a review.
+
+    FALSIFIABLE: delete any one of these statements from DEMO_MODEL_NOTICE.
+    """
+    from engine.predict import DEMO_MODEL_NOTICE as notice
+
+    lowered = notice.lower()
+    assert "not the published" in lowered, "it must deny being the published engine"
+    assert "cse-cic-ids2018" in lowered.replace("cse-cic-ids-2018", "cse-cic-ids2018"), (
+        "it must name the dataset the published numbers were measured on")
+    assert "memorised" in lowered or "memorized" in lowered, (
+        "it must say the demo model has memorised its one capture")
+    assert "reproduces nothing" in lowered
+    assert "do not quote" in lowered
+
+
+# -- the demo flag as DATA, through the production call path ---------------
+
+def test_a_demo_run_is_flagged_in_the_return_dict_and_the_persisted_summary(
+        demo_lane, fixture_csv, tmp_path):
+    """A downstream consumer must be able to tell demo output from real output
+    without parsing prose - the same way `unparsed_frames` and
+    `role_features_degraded` are read - and a SAVED run must carry it too.
+
+    FALSIFIABLE: drop `demo_model` (or `artifact_lane`) from the summary dict in
+    predict_file and this fails in the return value and on disk at once, because
+    the persisted file is asserted to equal the returned one.
+    """
+    import json
+
+    from engine import predict as P
+    from engine.predict import RUN_SUMMARY_FILE
+
+    out = tmp_path / "run"
+    result = P.predict_file(_small_input(fixture_csv, tmp_path), out_dir=out)
+
+    assert result["demo_model"] is True
+    assert result["artifact_lane"] == "demo"
+    assert result["demo_model_notice"] == P.DEMO_MODEL_NOTICE
+    assert result["demo_model_source"] == "app/assets/synthetic_demo.pcap"
+
+    on_disk = json.loads((out / RUN_SUMMARY_FILE).read_text(encoding="utf-8"))
+    assert on_disk["demo_model"] is True and on_disk["artifact_lane"] == "demo"
+    assert on_disk == {k: v for k, v in result.items()
+                       if k not in ("forecasts", "graph")}, (
+        "the persisted run summary and the returned one have drifted")
+
+
+def test_every_forecast_object_says_which_lane_produced_it(
+        demo_lane, fixture_csv, tmp_path):
+    """forecasts.json is a bare array. It gets read, copied and quoted from on its
+    own, long after the summary beside it is gone, so the lane has to travel on
+    every object rather than once per run.
+
+    FALSIFIABLE: remove `"demo_model": lane.demo` from the forecast object in
+    predict_file. The schema requires it, so this fails as a validation error
+    inside predict_file - the run stops rather than emitting unlabelled
+    forecasts.
+    """
+    import json
+
+    from engine import predict as P
+    from engine.predict import FORECASTS_FILE
+
+    out = tmp_path / "run"
+    result = P.predict_file(_small_input(fixture_csv, tmp_path), out_dir=out)
+    assert result["forecasts"], "the demo lane produced no forecasts to label"
+    assert all(f["demo_model"] is True for f in result["forecasts"])
+
+    saved = json.loads((out / FORECASTS_FILE).read_text(encoding="utf-8"))
+    assert saved == result["forecasts"]
+    assert all(f["demo_model"] is True for f in saved)
+
+
+def test_every_ledger_record_names_the_lane_that_wrote_it(
+        demo_lane, fixture_csv, tmp_path):
+    """The ledger is the tamper-evident record of what the engine forecast. A demo
+    record that looks exactly like a published one is the worst version of this
+    feature's failure, and the lane rides INSIDE the hashed content, so a record
+    cannot be edited into a published-looking one without breaking the chain.
+
+    FALSIFIABLE: drop `artifact_lane` from the ledger.append call and the first
+    assertion fails; keep it but edit a written record's lane field by hand (done
+    below) and verification fails at that record.
+    """
+    import json
+
+    from engine import predict as P
+    from ledger import verify_cli
+
+    out = tmp_path / "run"
+    result = P.predict_file(_small_input(fixture_csv, tmp_path), out_dir=out)
+    assert result["n_alerts"] >= 1, "no ledger records were written to inspect"
+
+    chain = out / "audit_chain.jsonl"
+    lines = [ln for ln in chain.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    records = [json.loads(ln) for ln in lines]
+    assert {r["artifact_lane"] for r in records} == {"demo"}
+    ok, first_bad = verify_cli.verify(chain)
+    assert ok, "an untampered demo-lane ledger must verify (failed at %s)" % (first_bad,)
+
+    # relabelling a demo record as published is a tamper, not an edit
+    records[0]["artifact_lane"] = "published"
+    lines[0] = json.dumps(records[0], sort_keys=True, separators=(",", ":"))
+    chain.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    ok, first_bad = verify_cli.verify(chain)
+    assert not ok and first_bad == 0, (
+        "editing a record's lane must break the hash chain at that record")
+
+
+def test_a_demo_run_announces_itself_on_stderr(demo_lane, fixture_csv, tmp_path,
+                                               capsys):
+    """The data fields are what a program reads. This is what a human sees when
+    they run the CLI or the smoke runner and would otherwise watch a normal
+    -looking run scroll past.
+
+    FALSIFIABLE: delete the `announce_lane(lane)` call from predict_file and
+    nothing is printed. A published run must stay silent, which the second half
+    checks by asserting the notice is the only thing that could have printed it.
+    """
+    from engine import predict as P
+
+    P.predict_file(_small_input(fixture_csv, tmp_path), out_dir=tmp_path / "run")
+    err = capsys.readouterr().err
+    assert "DEMO MODEL" in err and "NOT THE PUBLISHED ENGINE" in err
+    assert str(demo_lane[2]) in err, "the announcement must name the lane directory"
+    assert "app/assets/synthetic_demo.pcap" in err
+
+    # the published lane says nothing at all
+    published = P.ArtifactLane(name="published", dir=tmp_path, cfg={}, demo=False,
+                               notice=None, source=None)
+    P.announce_lane(published)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_tampered_demo_model_is_refused_exactly_as_a_tampered_published_one(
+        demo_lane, fixture_csv, tmp_path):
+    """M9.3 on the demo lane. The attestation is the same call against the demo
+    lane's own weights.sha256 - not a special case, not an exemption - so a
+    demo model edited after its digests were recorded is refused and NO ledger is
+    written.
+
+    FALSIFIABLE (two ways):
+      * skip the digest check when `lane.demo` - the obvious shortcut, since a
+        locally fitted model "obviously" matches - and the tampered run below
+        completes and writes a chain;
+      * pass the base `cfg` instead of `lane.cfg` to VW.verify, so the check
+        reads the PUBLISHED digest record: with no such record, `verify` returns
+        (False, 'weights.sha256 ...') and the control run at the top of this test
+        fails instead.
+    """
+    from engine import predict as P
+
+    _cfg, _published, demo_dir = demo_lane
+
+    # control: the untampered lane runs and writes a ledger
+    small = _small_input(fixture_csv, tmp_path)
+    clean = tmp_path / "clean"
+    P.predict_file(small, out_dir=clean)
+    assert (clean / "audit_chain.jsonl").exists()
+
+    # a CSV scores through the flow head; edit that model's bytes
+    model = demo_dir / DEMO_NOWCAST_FLOW
+    model.write_bytes(model.read_bytes().replace(b'"base_score"', b'"base_scorE"', 1))
+
+    out = tmp_path / "tampered"
+    with pytest.raises(RuntimeError, match="SHA-256 mismatch"):
+        P.predict_file(small, out_dir=out)
+    assert not (out / "audit_chain.jsonl").exists(), (
+        "no ledger record may be written when a demo weight fails its digest")
+
+
+def test_the_kstep_forecast_inherits_the_lane_and_leads_with_the_demo_notice(
+        demo_lane, fixture_csv, tmp_path):
+    """A k-step curve drawn from a demo model is the most misleading artifact this
+    feature can produce: it is shaped like a forecast and plotted like one. So the
+    block, the persisted file and every entry carry the lane, and the caveat a UI
+    renders leads with the demo notice rather than with the forward-forecast one.
+
+    FALSIFIABLE: return FORWARD_FORECAST_CAVEAT unconditionally from
+    `forecast_caveat`, or drop `demo_model` from the block - each breaks a
+    separate assertion here.
+    """
+    import json
+
+    from engine import forecast as FC
+
+    _add_horizon_heads(demo_lane[0], demo_lane[2])
+    out = tmp_path / "run"
+    result = FC.forecast_file(_small_input(fixture_csv, tmp_path), out_dir=out)
+
+    assert result["demo_model"] is True and result["artifact_lane"] == "demo"
+    assert result["horizons"], "no k-step head was served, so there is no curve to label"
+    assert all(e["demo_model"] is True for e in result["forecast"])
+    assert result["forecast_caveat"].startswith("DEMO MODEL")
+    assert FC.FORWARD_FORECAST_CAVEAT in result["forecast_caveat"], (
+        "the measured forward-forecast caveat must survive the demo prefix, not be "
+        "replaced by it")
+
+    block = json.loads((out / FC.FORECAST_FILE).read_text(encoding="utf-8"))
+    assert block["demo_model"] is True and block["artifact_lane"] == "demo"
+    assert block["forecast_caveat"] == result["forecast_caveat"]
+    assert block["demo_model_notice"]
+
+
+def test_the_kstep_heads_are_loaded_from_the_same_lane_as_the_nowcast(
+        demo_lane, fixture_csv, tmp_path, monkeypatch):
+    """A run must not pair a published nowcast with a demo forward curve, or the
+    reverse. engine/forecast.py never resolves a lane of its own: it reuses the
+    one the nowcast put in the scoring context.
+
+    FALSIFIABLE: pass `cfg` instead of `lane.cfg` to `_load_horizon_heads` in
+    forecast_file. Every head then resolves against the PUBLISHED directory,
+    which here is empty, so `horizons` comes back empty and
+    `unavailable_horizons` fills up - both asserted below.
+    """
+    from engine import forecast as FC
+    from engine import predict as P
+
+    _cfg, _published, demo_dir = demo_lane
+    seen = []
+    real_load = P._load_engine
+
+    def spy(cfg, variant):
+        seen.append(str(cfg["paths"]["artifacts_dir"]))
+        return real_load(cfg, variant)
+
+    _add_horizon_heads(_cfg, demo_dir)
+    monkeypatch.setattr(P, "_load_engine", spy)
+    result = FC.forecast_file(_small_input(fixture_csv, tmp_path), out_dir=tmp_path / "run")
+
+    assert result["horizons"] == sorted(int(k) for k in _cfg["engine"]["forecast_horizons"])
+    assert result["unavailable_horizons"] == {}
+    assert seen, "no weights were loaded at all"
+    assert set(seen) == {str(demo_dir)}, (
+        "the nowcast and the k-step heads came from different directories: %s" % (
+            sorted(set(seen)),))
+
+
+def test_verify_weights_covers_the_demo_lanes_own_weights(demo_lane, tmp_path):
+    """The demo lane's weight filenames are not the published ones, so TRACKED
+    alone would hash none of them: `record` would write a digest file covering
+    nothing and `verify` would then pass over a lane it had checked no bytes of.
+    That is the silent exemption this extension exists to prevent.
+
+    FALSIFIABLE: make `tracked_names` return TRACKED unconditionally. `record`
+    then raises (it refuses a demo record that covers none of the lane's own
+    weights), and every assertion below fails.
+    """
+    import json
+
+    from engine import predict as P
+
+    cfg, _published, demo_dir = demo_lane
+    VW = _verify_weights_module()
+    lane_cfg = P._lane_cfg(cfg, demo_dir)
+
+    assert VW.is_demo_lane(lane_cfg) is True
+    assert VW.is_demo_lane(cfg) is False, "the published lane must not read as demo"
+
+    names = VW.tracked_names(lane_cfg)
+    assert DEMO_NOWCAST_FULL in names and DEMO_NOWCAST_FLOW in names
+    assert set(VW.TRACKED) <= set(names), "the published names must not be dropped"
+    assert DEMO_NOWCAST_FULL not in VW.TRACKED, (
+        "the demo names belong to the lane, not to the published TRACKED list")
+
+    recorded = json.loads(VW.digest_path(lane_cfg).read_text(encoding="utf-8"))
+    assert DEMO_NOWCAST_FULL in recorded and DEMO_NOWCAST_FLOW in recorded
+    assert "window_scaler.pkl" in recorded
+    ok, offender = VW.verify(lane_cfg)
+    assert ok, "the recorded demo lane must verify (%s)" % (offender,)
+
+    # and the record is about THIS lane only: the published lane has none
+    ok, offender = VW.verify(cfg)
+    assert not ok and "weights.sha256" in str(offender)
+
+
+def test_a_digest_record_that_hashes_nothing_is_refused_and_never_reads_as_verified(
+        data_cfg, tmp_path):
+    """An empty attestation is the absence of one wearing its name.
+
+    MEASURED IN THIS SESSION: `--record` against a directory holding none of the
+    tracked files wrote `{}`, and the next `verify` returned (True, None) - the
+    CLI printed "OK: all tracked model weights match their recorded SHA-256"
+    having hashed no bytes of anything. The engine's own call passes explicit
+    `names`, so it was never fooled; the human running the attestation script
+    was.
+
+    FALSIFIABLE, two ways: drop the `if not digests` refusal in `record` and the
+    first half passes (an empty record is written); drop the `if not recorded`
+    check in `verify` and the second half returns verified for a record of
+    nothing.
+    """
+    import json
+
+    from engine import predict as P
+
+    VW = _verify_weights_module()
+    empty = tmp_path / "artifacts"
+    empty.mkdir(parents=True)
+    cfg = P._lane_cfg(data_cfg, empty)
+
+    with pytest.raises(RuntimeError, match="hash nothing"):
+        VW.record(cfg)
+    assert not VW.digest_path(cfg).exists(), (
+        "a refused record must not leave a digest file behind")
+
+    # ... and a record emptied by hand is not verified either
+    VW.digest_path(cfg).write_text(json.dumps({}), encoding="utf-8")
+    ok, offender = VW.verify(cfg)
+    assert not ok and "no file at all" in str(offender)
+
+    # the CLI reports the refusal as a message and an exit code, not a traceback
+    assert VW.main(["--record", "--artifacts-dir", str(empty)]) == 1

@@ -16,15 +16,33 @@ set — `requirements.txt` is the single source of truth for both.
 > **What "offline" is actually enforced by, precisely.** `tests/net_guard.py`
 > supplies `network_disabled()`, exposed by `tests/conftest.py` as the
 > `no_network` fixture. That fixture is **opt-in — it is not `autouse`**, so it
-> does not apply to the suite. Exactly three tests request it
-> (`grep -rn no_network tests/`): `tests/test_offline.py`,
-> `tests/test_smoke.py`, and
-> `tests/test_app.py::test_pipeline_and_panels_work_offline`. All three are
-> gated on trained artifacts, so **on a bare checkout zero tests run with
-> sockets blocked** — the offline guarantee (PS hard constraint #1) is asserted
-> only after you bootstrap the artifacts, as the *Bootstrap* section below
-> describes. `python -m pytest tests/test_bootstrap_state.py -q -s` prints
-> whether that has happened on your machine.
+> does not apply to the suite. Count the tests that request it yourself —
+> `grep -rn "no_network" tests/*.py` — rather than trusting a number typed here;
+> an earlier revision of this paragraph said "exactly three" and was already
+> wrong by the time anyone read it, because the suite grew one.
+>
+> What matters is which of them run *on your machine*, and that is not "all" or
+> "none". The three that exercise the **engine** end to end —
+> `tests/test_offline.py`, `tests/test_smoke.py` and
+> `tests/test_app.py::test_pipeline_and_panels_work_offline` — are gated on the
+> **published** trained artifacts, and a bootstrapped demo lane does not satisfy
+> that gate (see *Run the pipeline with nothing but the clone* below). So on a
+> bare checkout the offline guarantee over the **inference path** (PS hard
+> constraint #1) is **not** asserted. It is asserted only after you bootstrap
+> the published artifacts.
+>
+> One test under the socket kill-switch is **not** artifact-gated and does run on
+> a bare clone: `tests/test_evasion.py::test_a_transformed_table_survives_a_pcap_round_trip`,
+> which writes a transformed packet table back out as a real pcap and re-parses
+> it with sockets blocked. Verified on this machine on 2026-09-12 with no
+> `artifacts/` and no `artifacts_demo/` present — it passes rather than skipping.
+> That covers the pcap writer/parser, not the engine, so it does not close the
+> gap above; it is recorded because "zero tests run with sockets blocked" was the
+> previous wording and it was false.
+>
+> `python -m pytest tests/test_bootstrap_state.py -q -s` prints which of these
+> hold on your machine, derived from the real skip markers rather than from this
+> paragraph.
 
 ## Preflight
 
@@ -120,9 +138,120 @@ list — run:
 C:\sih26\.venv\Scripts\python -m pytest tests\test_bootstrap_state.py -q -s
 ```
 
+## Run the pipeline with nothing but the clone (the demo lane)
+
+This is the route for a judge who wants to *watch the thing work* in the next five
+minutes. It does not need the dataset, the released weights, or a network.
+
+```powershell
+C:\sih26\.venv\Scripts\python scripts\bootstrap_demo_artifacts.py
+```
+
+It fits a small XGBoost model from `app/assets/synthetic_demo.pcap` — the
+deterministic hand-authored capture that ships in the repo — and writes it to
+`artifacts_demo/`, which is a **separate artifact lane** from the published
+`artifacts/`. Timed on this machine on 2026-09-12, two consecutive runs into a
+scratch directory: **16.7 s** and **18.4 s**, with the venv already built and the
+bytecode already compiled. Time your own — a first run on a cold clone is slower,
+and that is the number you will actually experience. It needs no network and no environment
+variables, though it will tell you if `SIH26_HMAC_KEY` is unset, because the two
+role features are then zero at fit time — the engine zeroes them at inference
+too, so the two agree, but setting the key later changes the inputs the model was
+fitted on and you should re-run the script.
+
+After it finishes, the app and the CLI run:
+
+```powershell
+C:\sih26\.venv\Scripts\streamlit run app\streamlit_app.py
+```
+
+### What this is not
+
+Read this before you read a probability off the screen.
+
+The demo model is fitted on one capture of a few minutes, and its alert
+thresholds are chosen **on the same rows it was fitted on**. It has memorised
+that capture. Score the capture back and a high probability means *the model has
+seen this row before* — it is not a detection, and it is not a measurement. The
+persisted thresholds say so themselves: `artifacts_demo/engine_threshold.json`
+records `"auroc_is_in_sample": true` and an in-sample AUROC of 1.0 for every
+head, which is what perfect memorisation looks like, not what good detection
+looks like.
+
+It never saw CSE-CIC-IDS-2018. **No number it produces is comparable to any
+number in `README.md`, the report or the deck, and running it reproduces
+none of them.** Every run of the demo lane prints that in full on stderr before
+it does anything, tags every forecast object with `demo_model: true`, and writes
+`artifact_lane: "demo"` into every ledger record. `artifacts_demo/WHAT_THIS_IS.txt`
+repeats it beside the weights.
+
+Three structural guards keep the two lanes apart, so this is not a promise in a
+document:
+
+- the demo weights carry a `demo_` filename prefix and live in their own
+  directory; `engine/thresholds.py` refuses to serve a demo-marked threshold file
+  from any directory but the configured demo one, so **copying `artifacts_demo/`
+  into `artifacts/` fails loudly** rather than quietly becoming "the model";
+- the published lane always wins when it is present, and a *partially* present
+  published lane is a hard error rather than a silent fallback to the demo model;
+- the demo lane gets its own `weights.sha256`, so the engine's existing
+  weight attestation still runs against it and still refuses a tampered demo
+  model.
+
+### It does not turn any skipped test green, and that is deliberate
+
+Bootstrapping the demo lane does **not** reduce the suite's skip count. The
+end-to-end tests (`tests/test_offline.py`, `tests/test_smoke.py`, the
+engine-dependent part of `tests/test_app.py`) stay gated on the *published*
+artifacts. A test that passes against a model trained on five minutes of
+synthetic traffic is not evidence for a claim measured on CSE-CIC-IDS-2018, and
+letting the count fall would convert "unverified" into "verified" with nothing
+actually verified.
+
+`tests/conftest.py` records, per test, whether its subject is plumbing (which the
+demo model could legitimately exercise) or a measured number (which it never
+can). The report prints the resulting gap under **DEMO LANE: PERMITTED vs
+ACTUALLY EXECUTING**:
+
+```powershell
+C:\sih26\.venv\Scripts\python -m pytest tests\test_bootstrap_state.py -q -s
+```
+
+On a demo-lane checkout that section currently reads `0 of 11` — eleven tests are
+judged safe to run against the demo model and none of them does, because each
+still carries its own published-artifact gate. That gap understates what is
+checked and can never overstate it. Measured on this machine on 2026-09-12, the
+reason it has not been closed is concrete: the demo model raises **0 alerts on
+the committed 1,000-flow fixture** (`tests/fixtures/mini.csv`), because nothing
+in CSE-CIC-format flow data clears a threshold chosen on synthetic packet
+captures. `tests/test_offline.py` and `tests/test_smoke.py` both assert a
+non-empty forecast list, so pointing their gates at the demo lane today would
+make them **fail**, not pass. The fix, when it comes, is to the demo lane — never
+to the assertions.
+
+Three of the eleven would not even get as far as a failing assertion, and that
+matters more than it sounds. The same run produced 0 timeline rows, 0 host-ranking
+rows and **no `audit_chain.jsonl` at all**, so the ledger-tamper, what-if-ablation
+and determinism tests raise `TypeError`, `IndexError` and `FileNotFoundError`
+respectively before asserting anything. An error hit while moving a gate is the
+single most likely way this ends with a deleted assertion instead of a better
+demo lane, so each of those three carries the measurement in its own entry in
+`tests/conftest.py`. In the other direction, exactly one of the eleven —
+`test_pipeline_result_carries_a_host_graph` — has assertions the demo lane really
+does satisfy on this fixture (measured: 164 graph nodes and 166 edges on a run
+with zero alerts, because the graph is built over hosts rather than alerts). Its
+entry says so too. The registry is a record of what was measured, not a list of
+hopes.
+
+What the demo lane *does* exercise honestly is `tests/test_demo_bootstrap.py`,
+which fits and scores a demo model of its own and runs on a bare clone. The
+report shows it as `DEMO` rather than `RUNS`, because "the pipeline works" and
+"the published number holds" are different claims.
+
 ## Bootstrap: turning skips into passes
 
-The gated tests need `artifacts/` populated. Two routes:
+The gated tests need `artifacts/` populated. The demo lane above does **not** do
+this, by design — these are the two routes that do:
 
 ```powershell
 # 1. Download the released artifacts and check them against the README digests.

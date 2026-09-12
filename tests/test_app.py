@@ -31,8 +31,28 @@ from tests.test_docs_claims import normalise as claim_normalise
 
 
 def _engine_ready() -> bool:
+    """True when the PUBLISHED engine bundle is on disk.
+
+    Narrow on purpose. `requires_engine` gates tests that assert on scored
+    output, and a demo model fitted on one synthetic capture is not evidence for
+    any of it — see tests/_stubs.engine_model_loadable, which is the broad
+    predicate and is deliberately not a synonym for this one.
+    """
     return (importlib.util.find_spec("xgboost") is not None
             and resolve_path("artifacts/engine_model.json").exists())
+
+
+def _app_can_score_anything() -> bool:
+    """True when the app would find SOME bundle, published OR demo.
+
+    The gate for the tests that pin what the app does when it can score NOTHING:
+    a demo bundle closes those exactly as a published one does. Gating them on
+    the published lane alone made them depend on whether someone had happened to
+    run the demo bootstrap on this machine, which is how they broke.
+    """
+    from tests._stubs import engine_model_loadable
+
+    return importlib.util.find_spec("xgboost") is not None and engine_model_loadable()
 
 
 requires_engine = pytest.mark.skipif(
@@ -252,6 +272,10 @@ UNGUARDED_PANEL_CALLS = {
     "max_upload_mb": "same file, same reason",
     "rgba": "pure colour arithmetic over theme_colors() output",
     "coverage_note": "pure reader of the result dict the pipeline already returned",
+    "provenance_block": "same — assembles the provenance box out of the result dict",
+    "is_demo_model_run": "same — one boolean out of the result dict",
+    "threshold_metric_label": "same — formats a label from the result dict",
+    "benchmark_caveats": "same — selects which caveats apply from the result dict",
     "role_features_degraded_note": "same — one boolean out of the result dict",
     "host_selector_label": "same",
     "ledger_failure_text": "same, over ledger_status() output",
@@ -837,8 +861,8 @@ def test_empty_state_names_a_button_the_app_really_renders(app):
 
 
 @pytest.mark.skipif(
-    _engine_ready(),
-    reason="this pins the NO-artifacts first click; with artifacts the pipeline runs",
+    _app_can_score_anything(),
+    reason="this pins the click when NO bundle exists; any bundle makes the pipeline run",
 )
 def test_first_click_without_artifacts_shows_a_card_not_a_traceback(app):
     """F23: the finding itself — the first click on a clean machine rendered a
@@ -1000,11 +1024,21 @@ def test_sections_3_and_4_say_so_when_the_ranking_above_failed(rendered, monkeyp
 
 
 def test_empty_benchmark_section_renders_the_bootstrap_card(rendered, no_forecast_engine):
-    """F104: with results/ absent the section used to be a bare header."""
+    """F104: with results/ absent the section used to be a bare header.
+
+    It shows the bootstrap card instead — and NOT the population caveat, which is
+    about how to read rows that are not there. A caveat printed over an empty
+    section is noise, and noise is how a reader learns to skip the caveats that
+    matter (panels.benchmark_caveats owns that rule)."""
     at = rendered.run()
     assert panels.BENCHMARK_EMPTY_HINT in [i.value for i in at.info]
     assert panels.BENCHMARK_EMPTY_COMMANDS in [c.value for c in at.code]
-    assert panels.BENCHMARK_CAVEAT in [w.value for w in at.warning]
+    assert panels.BENCHMARK_CAVEAT not in [w.value for w in at.warning], (
+        "the population caveat qualifies rows; with no rows it must stay silent"
+    )
+    assert panels.benchmark_caveats({}, has_rows=False) == [], (
+        "and the rule lives in the panel, not in this assertion"
+    )
 
 
 def test_what_if_result_survives_the_next_interaction(rendered, monkeypatch, no_forecast_engine):

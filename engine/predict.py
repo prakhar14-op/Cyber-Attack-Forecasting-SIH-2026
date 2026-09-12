@@ -12,12 +12,20 @@ to the tamper-evident ledger. Returns the summary the app and smoke runner use.
 
 CSV input gives flow-derived features only (packet-statistic features need
 PCAP — decision 001); the pipeline runs either way.
+
+Weights come from one ARTIFACT LANE, resolved once per run: the published engine
+if it is on disk, otherwise a declared demo lane fitted from the bundled
+synthetic capture so a fresh clone can run at all. See the lane section below —
+the demo lane can never shadow the published one, and every result of a demo run
+says so in its own data.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -61,12 +69,295 @@ RUN_SUMMARY_FILE = "run_summary.json"
 # renaming one here without renaming it there cannot silently leave the k-step
 # forecaster scoring nothing.
 SCORING_CONTEXT_KEYS = ("variant", "feature_columns", "wf", "X", "probabilities",
-                        "flows", "threshold")
+                        "flows", "threshold", "lane")
+
+# ---------------------------------------------------------------------------
+# Artifact lanes: the PUBLISHED engine, and the DEMO model a fresh clone can fit
+# ---------------------------------------------------------------------------
+# The published weights are gitignored (CLAUDE.md: never commit weights) and the
+# GitHub Release is unpublished, so a judge who clones this repository has no
+# artifacts/ and cannot run anything. scripts/bootstrap_demo_artifacts.py fits a
+# small model from the BUNDLED synthetic capture into a second artifact
+# directory (`configs/data.yaml` `demo.artifacts_dir`) so the pipeline can be
+# exercised end to end. That model has MEMORISED that capture. It reproduces none
+# of this project's published numbers, which were measured on CSE-CIC-IDS-2018.
+#
+# A lane declares itself in its persisted thresholds: engine/thresholds.py owns
+# the `artifact_lane` field and refuses to serve a demo-marked threshold file from
+# any directory but the configured demo one. This module is the other half — it
+# decides WHICH lane a run uses, and makes every result say so.
+#
+# Four rules keep the two impossible to confuse; each is pinned by a test in
+# tests/test_engine.py:
+#   1. The published lane is consulted FIRST and wins whenever it is usable. The
+#      demo lane can never shadow it.
+#   2. A PARTIALLY present published lane is a hard error, never a fallback. A
+#      real artifact going missing must not quietly become a demo run that looks
+#      normal — that is the exact failure this whole design exists to prevent.
+#   3. The demo directory is used only when its own thresholds DECLARE it the demo
+#      lane. Flipping that declaration (or deleting it) to dress the demo weights
+#      up as published ones fails the run instead of renaming them.
+#   4. The lane is resolved ONCE per run and travels as a config, so a run cannot
+#      mix a published nowcast with a demo k-step head.
+SCALER_FILE = "window_scaler.pkl"
+
+# What every result produced on the demo lane carries, verbatim, in its return
+# dict, in run_summary.json and in the k-step block. The text is OURS, in this
+# module: the provenance block inside a demo lane is written by another script,
+# and nothing written there may be able to soften what a demo run says about
+# itself. Every sentence is a fact about the lane, not a hedge.
+DEMO_MODEL_NOTICE = (
+    "DEMO MODEL - NOT THE PUBLISHED ENGINE. This run scored against a small model "
+    "fitted locally by scripts/bootstrap_demo_artifacts.py from the synthetic "
+    "capture bundled in this repository, so that a fresh clone can execute the "
+    "pipeline at all. It was fitted and thresholded on that one capture and has "
+    "memorised it: a high probability here means the model has seen the row "
+    "before, not that an attack was detected. It is NOT the model behind any "
+    "number this project publishes - those were measured on CSE-CIC-IDS-2018, "
+    "which is not on this machine, and the fused 0.933 AUROC is eval-side and "
+    "does not run in this engine at all. Every probability, threshold, alert, "
+    "stage and forecast in this run is an illustration of the machinery and "
+    "reproduces nothing. Do not quote a number from a demo run."
+)
+
+
+class ArtifactLane(NamedTuple):
+    """Which set of weights a run is using, and how to read it.
+
+    `cfg` is the config with `paths.artifacts_dir` pointed at this lane. The lane
+    travels as a CONFIG rather than as an extra argument because every reader of
+    the artifacts directory — engine/thresholds.py, scripts/verify_weights.py and
+    _load_engine — resolves it out of the config. Handing them one lane cfg puts
+    the whole run on one lane by construction; an extra parameter would have to be
+    threaded through three modules and could be forgotten on one, which is how a
+    run ends up with a published nowcast and a demo k=8 head.
+    """
+
+    name: str          # engine.thresholds.PUBLISHED_LANE | .DEMO_LANE
+    dir: Path
+    cfg: dict
+    demo: bool
+    notice: str | None  # DEMO_MODEL_NOTICE on the demo lane, None on the published one
+    source: str | None  # what the demo lane says it was fitted from, if it says
+
+
+def _verify_weights():
+    """scripts/verify_weights.py, imported by path.
+
+    `scripts/` is not a package, so it goes on sys.path first. One helper rather
+    than the same three lines in two places: the digest check and the
+    half-installed-bundle check must be talking about the same module.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    scripts = str(_Path(__file__).resolve().parent.parent / "scripts")
+    if scripts not in _sys.path:
+        _sys.path.insert(0, scripts)
+    import verify_weights as VW
+
+    return VW
+
+
+def _lane_core_files(cfg: dict) -> tuple[str, ...]:
+    """The files a lane must hold before ANY variant can be loaded from it.
+
+    The threshold filename is read from engine/thresholds.py rather than repeated
+    here, so renaming it there cannot leave this check testing for a file the
+    engine no longer writes.
+    """
+    from engine import thresholds as TH
+
+    return (TH.threshold_path(cfg).name, SCALER_FILE)
+
+
+def _published_lane_files(cfg: dict) -> tuple[str, ...]:
+    """The files THIS ENGINE would load out of a published lane: its threshold
+    file, its scaler, and its two nowcast weight files. Finding any of them in the
+    published artifacts directory is evidence that a published bundle was being
+    installed there.
+
+    Deliberately not all of scripts/verify_weights.TRACKED: `tgn_encoder.pt` and
+    `graft.pt` belong to the research models, the deployed engine never loads
+    them, and a machine that has done research training but has no engine bundle
+    is entitled to run the demo lane.
+
+    Wider than `_lane_core_files` on purpose. Lane resolution needs to know
+    whether the published directory is EMPTY (nothing was ever installed — fall
+    back to the demo lane) or HALF-INSTALLED (a published bundle is partly there
+    — refuse). The threshold file and the scaler alone do not answer that: a
+    directory holding `engine_model.json` and `engine_model_flow.json` and
+    nothing else is a half-finished release download, and before this list
+    existed it resolved to the demo lane and ran, which is the precise failure
+    this design exists to prevent (measured: the probe in this session resolved
+    lane='demo' with both published weight files sitting in the directory).
+
+    The weight names come from scripts/verify_weights.PUBLISHED_NOWCAST_WEIGHTS
+    rather than being spelled here, so the module that attests published weights
+    and the module that detects them cannot disagree about their names.
+    """
+    return (*_lane_core_files(cfg), *_verify_weights().PUBLISHED_NOWCAST_WEIGHTS)
+
+
+def _lane_cfg(cfg: dict, art_dir: Path) -> dict:
+    """`cfg` with paths.artifacts_dir repointed at one lane (never mutated)."""
+    return {**cfg, "paths": {**cfg["paths"], "artifacts_dir": str(art_dir)}}
+
+
+def demo_lane_dir(cfg: dict):
+    """configs/data.yaml `demo.artifacts_dir`, or None when the config has no demo
+    block at all (a stub cfg in a test, or a checkout predating the demo lane).
+
+    Deliberately the same lookup engine/thresholds.py makes, and pinned against it
+    by tests/test_engine.py::test_the_demo_lane_directory_is_one_place_in_config —
+    two modules disagreeing about where the demo lane lives is how a lane gets
+    loaded by one and disowned by the other.
+    """
+    demo = cfg.get("demo")
+    configured = demo.get("artifacts_dir") if isinstance(demo, dict) else None
+    return resolve_path(configured) if configured else None
+
+
+def _demo_source(data: dict):
+    """What the demo lane says it was fitted from, if it says.
+
+    Best-effort DETAIL, read out of the lane's own provenance block. The
+    load-bearing statement is DEMO_MODEL_NOTICE, which is ours; nothing this
+    returns can soften it, and its absence changes nothing.
+    """
+    prov = data.get("demo_provenance")
+    source = prov.get("source_capture") if isinstance(prov, dict) else None
+    return source if isinstance(source, str) else None
+
+
+def _demo_lane(cfg: dict) -> ArtifactLane | None:
+    """The demo lane, or None if none was ever bootstrapped — but never a silent
+    None for a lane that IS there and is wrong.
+
+    A half-written lane, and a lane whose thresholds do not declare themselves
+    demo, both raise here. Returning None for either would surface as the ordinary
+    "no artifacts" error, which reads as "nothing was ever bootstrapped" and sends
+    whoever is looking at it to the wrong fix.
+    """
+    from engine import thresholds as TH
+
+    demo_dir = demo_lane_dir(cfg)
+    if demo_dir is None:
+        return None
+    core = _lane_core_files(cfg)
+    present = [n for n in core if (demo_dir / n).exists()]
+    if not present:
+        return None
+    if len(present) < len(core):
+        raise RuntimeError(
+            f"the demo artifact lane {demo_dir} is INCOMPLETE: {present} present, "
+            f"{[n for n in core if n not in present]} missing. A half-written demo lane "
+            "is refused rather than skipped — skipping it would surface as the ordinary "
+            "missing-artifacts error and hide that a bootstrap ran and did not finish. "
+            "Re-run `python scripts/bootstrap_demo_artifacts.py`."
+        )
+    lane_cfg = _lane_cfg(cfg, demo_dir)
+    declared = TH.artifact_lane(lane_cfg)
+    if declared != TH.DEMO_LANE:
+        raise RuntimeError(
+            f"{TH.threshold_path(lane_cfg)} is in the demo artifact lane but declares "
+            f"lane '{declared}', not '{TH.DEMO_LANE}'. The engine will not load weights "
+            "from the demo directory as though they were published ones: either these "
+            "are published artifacts in the wrong place, or a demo lane's marker was "
+            "edited. Re-run `python scripts/bootstrap_demo_artifacts.py`, or point "
+            "`paths.artifacts_dir` at the real bundle."
+        )
+    persisted = json.loads(TH.threshold_path(lane_cfg).read_text(encoding="utf-8"))
+    return ArtifactLane(
+        name=TH.DEMO_LANE, dir=demo_dir, cfg=lane_cfg, demo=True,
+        notice=DEMO_MODEL_NOTICE, source=_demo_source(persisted),
+    )
+
+
+def resolve_artifact_lane(cfg: dict, variant: str) -> ArtifactLane:
+    """Which lane this run uses, for this input variant. Published first, always;
+    demo only as a complete, self-declared, announced fallback.
+
+    The published lane's claim is tested the honest way — by ASKING IT for this
+    variant's model spec, which is what the run is about to do anyway — rather than
+    by guessing from filenames. If it answers, it wins and the demo lane is never
+    looked at. Only a published lane with no persisted thresholds AT ALL
+    (FileNotFoundError) opens the question; a threshold file that exists but does
+    not carry this variant raises its own KeyError straight through here, because a
+    bundle that is missing one of its two models is broken, not a demo.
+
+    With nothing on disk anywhere this returns the PUBLISHED lane unchanged, so the
+    caller fails with the existing "run engine.train_engine / fetch the release"
+    error rather than a new one — "no weights at all" is not a demo-lane problem.
+    """
+    from engine import thresholds as TH
+
+    published_dir = resolve_path(cfg["paths"]["artifacts_dir"])
+    published = ArtifactLane(name=TH.PUBLISHED_LANE, dir=published_dir, cfg=cfg,
+                             demo=False, notice=None, source=None)
+
+    demo_dir = demo_lane_dir(cfg)
+    if demo_dir is not None and demo_dir == published_dir:
+        raise RuntimeError(
+            f"configs/data.yaml points `paths.artifacts_dir` and `demo.artifacts_dir` at "
+            f"the same directory ({published_dir}). One directory cannot be both lanes: "
+            "every run out of it would be reported as published while possibly holding "
+            "demo weights. Give the demo lane its own directory."
+        )
+
+    try:
+        TH.load_model_spec(cfg, variant)
+    except FileNotFoundError:
+        pass  # no persisted thresholds in the published lane at all
+    else:
+        return published
+
+    # The published lane has no threshold file. If it holds any OTHER part of a
+    # published bundle — the scaler, or either nowcast weight file — it is a
+    # half-installed published bundle, and quietly running the demo model instead
+    # would hide exactly that: the failure this whole design exists to prevent.
+    # The weight files are in this set because they alone are a plausible partial
+    # install (an interrupted release download leaves them and nothing else), and
+    # with only the scaler and the threshold in the set that state resolved to the
+    # demo lane and ran.
+    strays = [n for n in _published_lane_files(cfg) if (published_dir / n).exists()]
+    if strays:
+        raise RuntimeError(
+            f"the published artifact lane {published_dir} is INCOMPLETE: it holds "
+            f"{strays} but no {TH.threshold_path(cfg).name}. Refusing to fall back to a "
+            "demo model — a published artifact that went missing must not silently "
+            "become a demo run that looks normal. Restore it (`python "
+            "scripts/fetch_artifacts.py`, or `python -m engine.train_engine`), or move "
+            f"{published_dir} aside entirely if you meant to run the demo lane."
+        )
+    demo = _demo_lane(cfg)
+    return demo if demo is not None else published
+
+
+def announce_lane(lane: ArtifactLane, stream=None) -> None:
+    """Put a demo run in front of whoever started it, on stderr, every time.
+
+    The data fields are what a program reads; this is what a human sees when they
+    run the CLI, the smoke runner or a script and would otherwise watch a normal
+    -looking run scroll past. The published lane prints nothing.
+    """
+    if not lane.demo:
+        return
+    out = sys.stderr if stream is None else stream
+    lines = [f"*** {lane.notice}", f"*** demo artifact lane: {lane.dir}"]
+    if lane.source:
+        lines.append(f"*** demo model fitted from (as declared by the lane): {lane.source}")
+    print("\n".join(lines), file=out, flush=True)
+
 
 OUTPUT_SCHEMA = {
     "type": "object",
+    # `demo_model` is REQUIRED: a forecast object that does not say which lane
+    # produced it must not validate. forecasts.json is a bare array that can be
+    # read — or quoted from — on its own, long after the run summary beside it has
+    # been lost, so the lane has to travel on every object rather than only once.
     "required": ["host", "window_start", "probability", "stage", "technique",
-                 "top_features", "top_windows", "flagged_flows"],
+                 "top_features", "top_windows", "flagged_flows", "demo_model"],
     "properties": {
         "host": {"type": "string"},
         "window_start": {"type": "number"},
@@ -96,6 +387,7 @@ OUTPUT_SCHEMA = {
             },
         }},
         "estimated_lead_seconds": {"type": ["number", "null"]},
+        "demo_model": {"type": "boolean"},
     },
 }
 
@@ -105,6 +397,15 @@ def _is_pcap(path) -> bool:
 
 
 def _load_engine(cfg, variant: str):
+    """Load one variant's (booster, scaler, model filename) from the artifacts
+    directory `cfg` points at.
+
+    The LANE is the caller's decision, expressed by which cfg is handed in:
+    predict_file resolves it once with resolve_artifact_lane and passes
+    `lane.cfg`, and engine/forecast.py passes that same cfg on for every k-step
+    head. Called with a bare config this reads the published lane — the safe
+    default for any caller that has not thought about lanes at all.
+    """
     import pickle
 
     import xgboost as xgb
@@ -116,11 +417,23 @@ def _load_engine(cfg, variant: str):
     model_path = art / fname
     if not model_path.exists():
         raise FileNotFoundError(
-            f"{model_path} missing — run `python -m engine.train_engine` first (M8.1)"
+            f"{model_path} missing — run `python -m engine.train_engine` first (M8.1), "
+            "fetch the release with `python scripts/fetch_artifacts.py`, or fit the "
+            "bundled-capture demo model with `python scripts/bootstrap_demo_artifacts.py`"
+        )
+    scaler_path = art / SCALER_FILE
+    if not scaler_path.exists():
+        raise FileNotFoundError(
+            f"{scaler_path} missing while {model_path.name} is present — an artifact "
+            "lane with a model and no scaler would score a feature matrix on the wrong "
+            "scale. Re-fetch or re-fit the whole lane; do not mix lanes."
         )
     booster = xgb.XGBClassifier()
     booster.load_model(str(model_path))
-    with open(art / "window_scaler.pkl", "rb") as fh:
+    # Unpickling executes code, so the scaler is a trust boundary: predict_file
+    # checks both files against this lane's recorded SHA-256 BEFORE calling here
+    # (see the M9.3 block there). Load order matters — attest, then unpickle.
+    with open(scaler_path, "rb") as fh:
         scaler = pickle.load(fh)
     return booster, scaler, fname
 
@@ -189,6 +502,13 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
     facts, including what could not be parsed); returns the same summary with
     the forecasts and the host graph attached.
 
+    The returned summary — and therefore run_summary.json — carries
+    `artifact_lane`, `demo_model`, `demo_model_notice` and `demo_model_source`,
+    and every forecast object carries `demo_model`. On a demo run
+    `demo_model` is True everywhere, each ledger record says `artifact_lane:
+    "demo"`, and DEMO_MODEL_NOTICE has already been printed to stderr. None of
+    those numbers reproduce a published result; see DEMO_MODEL_NOTICE.
+
     exclude_host: what-if ablation (M10.4). When set, that host's own
     (source, window) rows and every flow it participated in are dropped from the
     already-extracted features before scoring — so the counterfactual runs
@@ -216,24 +536,42 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
 
     variant = "full" if _is_pcap(csv_path) else "flow"
     anonymizer = _maybe_anonymizer(cfg)
-    booster, scaler, model_file = _load_engine(cfg, variant)
-    threshold = TH.load_threshold(cfg, fpr_budget, variant=variant)
+
+    # WHICH WEIGHTS. Resolved ONCE, here, and every later read of an artifact in
+    # this run goes through `lane.cfg` — the nowcast model, the threshold, the
+    # digest record, and (via the scoring context) engine/forecast.py's k-step
+    # heads. One resolution is what makes a mixed-provenance run impossible.
+    lane = resolve_artifact_lane(cfg, variant)
+    announce_lane(lane)
 
     # M9.3: bind this batch to exact weights — refuse to log on mismatch, so a
-    # ledger entry can never claim provenance it does not have.
-    import sys as _sys
-    from pathlib import Path as _Path
+    # ledger entry can never claim provenance it does not have. Two things about
+    # this call:
+    #   * it runs BEFORE the weights are loaded, because loading the scaler
+    #     unpickles it; a tampered pickle must be refused, not executed and then
+    #     refused;
+    #   * it is the SAME call on both lanes, against `lane.cfg`, so it reads the
+    #     demo lane's own weights.sha256. A tampered demo model is refused exactly
+    #     as a tampered published one is, by this code and not by a special case.
+    VW = _verify_weights()
 
-    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent / "scripts"))
-    import verify_weights as VW
-
-    ok, offender = VW.verify(cfg, names=[model_file, "window_scaler.pkl"])
+    model_file = TH.load_model_spec(lane.cfg, variant)["file"]
+    ok, offender = VW.verify(lane.cfg, names=[model_file, SCALER_FILE])
     if not ok:
         raise RuntimeError(
-            f"model-weight SHA-256 mismatch ({offender}) — refusing to write ledger "
-            "records (M9.3). Re-record with scripts/verify_weights.py --record after "
-            "an intentional retrain."
+            f"model-weight SHA-256 mismatch ({offender}) in the {lane.name} artifact "
+            f"lane {lane.dir} — refusing to write ledger records (M9.3). Re-record with "
+            f"`python scripts/verify_weights.py --artifacts-dir {lane.dir} --record` "
+            "after an intentional retrain or re-bootstrap."
         )
+
+    booster, scaler, loaded_file = _load_engine(lane.cfg, variant)
+    if loaded_file != model_file:
+        raise RuntimeError(
+            f"the {lane.name} lane attested {model_file} but loaded {loaded_file}; "
+            "refusing to run on weights this run did not verify"
+        )
+    threshold = TH.load_threshold(lane.cfg, fpr_budget, variant=variant)
 
     flows, wf, unparsed = _windows_from_input(cfg, csv_path, anonymizer)
     if exclude_host is not None:
@@ -259,6 +597,10 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
         scoring_context.update({
             "variant": variant, "feature_columns": feat_cols, "wf": wf, "X": X,
             "probabilities": probs, "flows": flows, "threshold": threshold,
+            # The lane this run resolved, so engine/forecast.py loads its k-step
+            # heads from the SAME weights — never a published nowcast with a demo
+            # head bolted onto it, or the reverse.
+            "lane": lane,
         })
 
     explainer = EX.ShapExplainer(booster, feat_cols)
@@ -289,9 +631,16 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
     tops = explainer.top_features(X[alert_rows], k=5) if len(alert_rows) else []
     max_ctx = cfg["windows"]["max_sequence_windows"] * cfg["windows"]["stride_seconds"]
     for local_i, row in enumerate(alert_rows):
-        host = str(wf.iloc[row]["host"])
-        ws = float(wf.iloc[row]["window_start"])
-        feats = {c: float(wf.iloc[row][c]) for c in feat_cols}
+        # Read the row out of the arrays already built above, not out of the
+        # frame. `wf.iloc[row][c]` is one mixed-dtype row materialisation PER
+        # FEATURE (~30 per alert), and it was the second-largest cost in a run
+        # with many alerts. `raw_X` is `wf[feat_cols].to_numpy(float)` and
+        # hosts_arr/ws_arr are the same two columns, so the values are identical
+        # — verified in this session by byte-comparing forecasts.json and
+        # audit_chain.jsonl across the change on three input sizes.
+        host = str(hosts_arr[row])
+        ws = float(ws_arr[row])
+        feats = {c: float(v) for c, v in zip(feat_cols, raw_X[row])}
         # stage: the engine model is binary attack/benign; stage is inferred
         # from the observed pattern via the technique rules' parent stage guess.
         stage = _infer_stage(feats, stage_rules)
@@ -308,11 +657,19 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
             "top_windows": top_windows,
             "flagged_flows": EX.flagged_flows(flows, host, ws, window_sec),
             "estimated_lead_seconds": None,
+            # On every forecast, not just once per run: forecasts.json is an array
+            # that gets read, copied and quoted from on its own.
+            "demo_model": lane.demo,
         }
         _validate(obj)
         forecasts.append(obj)
+        # `artifact_lane` rides inside the hashed content, so a demo record cannot
+        # be edited into a published-looking one without breaking the chain. It is
+        # written on BOTH lanes: a published record states its provenance rather
+        # than implying it by the absence of a demo flag.
         ledger.append({"host": host, "window_start": ws, "probability": obj["probability"],
-                       "stage": stage, "technique": tech["technique"]})
+                       "stage": stage, "technique": tech["technique"],
+                       "artifact_lane": lane.name})
     ledger.checkpoint()
 
     graph = _build_graph(flows, wf, forecasts)
@@ -326,6 +683,14 @@ def predict_file(csv_path, out_dir, fpr_budget: float = 0.01, exclude_host=None,
             [f["host"] for f in forecasts] + [n["ip"] for n in graph["nodes"]]
         ),
         "role_features_degraded": role_features_degraded(anonymizer),
+        # WHICH WEIGHTS PRODUCED THESE NUMBERS, as data. Flat keys in the same
+        # spirit as `unparsed_frames` and `role_features_degraded`: a downstream
+        # consumer branches on the boolean without parsing any prose, and the
+        # notice is there for whatever puts text in front of a human.
+        "artifact_lane": lane.name,
+        "demo_model": lane.demo,
+        "demo_model_notice": lane.notice,
+        "demo_model_source": lane.source,
         "forecasts_file": FORECASTS_FILE,
     }
     (out_dir / FORECASTS_FILE).write_text(json.dumps(forecasts, indent=2), encoding="utf-8")
@@ -451,10 +816,33 @@ def _infer_stage(feats: dict, rules: dict) -> str:
     return UNCLASSIFIED_STAGE
 
 
-def _validate(obj: dict) -> None:
-    import jsonschema
+_VALIDATOR = None
 
-    jsonschema.validate(obj, OUTPUT_SCHEMA)
+
+def _validator():
+    """One validator for OUTPUT_SCHEMA, built once per process.
+
+    `jsonschema.validate(obj, schema)` re-validates the SCHEMA against its
+    metaschema on every call, and every alert in a run is validated: measured
+    here on a 977-alert demo run, that was 977 `check_schema` calls and the
+    single largest cost in predict_file (~20s of a 41s profiled run). The schema
+    is a module constant, so checking it once is the same guarantee — a malformed
+    OUTPUT_SCHEMA still raises SchemaError on the first validated object, not
+    silently.
+    """
+    global _VALIDATOR
+    if _VALIDATOR is None:
+        import jsonschema
+
+        cls = jsonschema.validators.validator_for(OUTPUT_SCHEMA)
+        cls.check_schema(OUTPUT_SCHEMA)
+        _VALIDATOR = cls(OUTPUT_SCHEMA)
+    return _VALIDATOR
+
+
+def _validate(obj: dict) -> None:
+    """Raise jsonschema.ValidationError unless `obj` satisfies OUTPUT_SCHEMA."""
+    _validator().validate(obj)
 
 
 def role_features_degraded(anonymizer) -> bool:

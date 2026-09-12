@@ -50,11 +50,35 @@ footnote; it travels in the returned dict and in the persisted file.
 A horizon with no usable head is REPORTED, never skipped: `unavailable_horizons`
 maps k to a plain-English reason. Silence must not be readable as safety.
 
-No k-step record is written to the tamper-evident ledger. The M9.3 provenance
-binding covers the weight files scripts/verify_weights.py tracks, and the
-per-horizon heads are not among them, so a k-step ledger entry could not carry
-the provenance a ledger entry is supposed to prove. The nowcast alerts
-predict_file writes are ledgered exactly as before.
+No k-step record is written to the tamper-evident ledger. The M9.3 binding
+engine/predict.py performs covers exactly two files — the horizon-0 weights it is
+about to load and the scaler — in BOTH lanes, and no per-horizon head is among
+them, so a k-step ledger entry could not carry the provenance a ledger entry is
+supposed to prove. The nowcast alerts predict_file writes are ledgered exactly as
+before.
+
+Being precise about what that does and does not say, because the two are easy to
+run together: `scripts/verify_weights.tracked_names` names the horizon-0 weights
+only, in both lanes, and that is the list `--record` writes from. A demo lane
+built by scripts/bootstrap_demo_artifacts.py nevertheless has its per-horizon
+heads IN its `weights.sha256` — that script writes its own digest record, hashing
+every weight it fitted (measured this session on a real bootstrap: nine files
+recorded, six of them k-step heads). So on a demo lane `verify_weights.py` does
+check the k-step heads, while the engine's own per-run binding still does not.
+That is strictly more attestation than the published lane has, never less, and
+neither lane's k-step head is verified at the moment this module loads it.
+
+DEMO LANE. This module never resolves a lane of its own: it takes the one the
+nowcast resolved out of the scoring context and loads every k-step head through
+that lane's config, so a published nowcast can never be paired with a demo
+forward curve. When that lane is the demo one, the returned block and
+kstep_forecast.json carry `demo_model: true`, `artifact_lane: "demo"` and
+`demo_model_notice`; each forecast entry carries `demo_model: true`; and
+`forecast_caveat` leads with the demo notice rather than with the measured
+forward-forecast caveat. A curve drawn from a model that memorised one 455-second
+capture is the single most misleading artifact this feature can produce — it is
+shaped like a forecast and plotted like one — so it is labelled at the block, at
+the entry and in the caption a UI shows.
 """
 
 from __future__ import annotations
@@ -89,13 +113,29 @@ FORWARD_FORECAST_CAVEAT = (
 _INPUT_KIND = {"full": "PCAP", "flow": "CSV/flow"}
 
 
+def forecast_caveat(lane) -> str:
+    """The caveat that travels with THIS run's curve.
+
+    On the published lane it is FORWARD_FORECAST_CAVEAT, unchanged. On the demo
+    lane the demo notice goes FIRST, because a k-step curve drawn from a model
+    that memorised one small capture is the most misleading artifact this feature
+    can produce: it looks exactly like a forecast, it is plotted exactly like a
+    forecast, and its shape is a property of the capture the model was fitted on.
+    The UI reads this string (app/panels.py), so prefixing it here is what puts
+    the demo warning under the plot rather than in a docstring.
+    """
+    if lane is not None and getattr(lane, "demo", False):
+        return f"{lane.notice}\n\n{FORWARD_FORECAST_CAVEAT}"
+    return FORWARD_FORECAST_CAVEAT
+
+
 def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
     """Nowcast + K-step forward forecast for one file.
 
     Returns everything engine.predict.predict_file returns, plus `horizons`,
     `stride_seconds`, `unavailable_horizons`, `forecast`, `per_host_curve`,
-    `forecast_caveat` and `forecast_file`. Also writes that k-step block to
-    out_dir/kstep_forecast.json.
+    `forecast_caveat`, `artifact_lane`, `demo_model`, `demo_model_notice` and
+    `forecast_file`. Also writes that k-step block to out_dir/kstep_forecast.json.
 
     `forecast` holds one entry per (host, source window, k). Source windows are
     the newest `engine.forecast_source_windows_per_host` windows of each host —
@@ -136,8 +176,14 @@ def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
     wf, X = context["wf"], context["X"]
     feat_cols = context["feature_columns"]
     variant = context["variant"]
+    # The lane the NOWCAST resolved, reused verbatim. The k-step heads are loaded
+    # through `lane.cfg`, so they come from the same artifact directory that
+    # produced the nowcast — a run cannot pair a published nowcast with a demo
+    # k=8 head, in either direction.
+    lane = context["lane"]
 
-    heads, unavailable = _load_horizon_heads(cfg, variant, horizons_wanted, fpr_budget)
+    heads, unavailable = _load_horizon_heads(lane.cfg, variant, horizons_wanted,
+                                             fpr_budget, lane=lane)
     # With no head at any horizon there is nothing to forecast FROM either; the
     # run still returns (and persists) `unavailable_horizons`, which is the
     # answer in that case.
@@ -161,7 +207,7 @@ def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
         for k in sorted(heads):
             probability = float(scored[k][j])
             threshold = heads[k][1]
-            forecast.append({
+            entry = {
                 "host": host,
                 "window_start": window_start,
                 "k": int(k),
@@ -171,7 +217,15 @@ def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
                 "technique": technique,
                 "alert": bool(probability >= threshold),
                 "threshold": threshold,
-            })
+            }
+            if lane.demo:
+                # Only on the demo lane. The published entry key set is the
+                # contract tests/test_forecast_engine.py pins exactly, and a
+                # published run keeps it; a demo entry carries one key more so a
+                # single entry lifted out of kstep_forecast.json still says what
+                # produced it. `entry.get("demo_model")` is falsey either way.
+                entry["demo_model"] = True
+            forecast.append(entry)
 
     block = {
         "horizons": sorted(heads),
@@ -179,7 +233,13 @@ def forecast_file(input_path, out_dir, fpr_budget: float = 0.01) -> dict:
         "unavailable_horizons": unavailable,
         "forecast": forecast,
         "per_host_curve": _per_host_curve(forecast),
-        "forecast_caveat": FORWARD_FORECAST_CAVEAT,
+        "forecast_caveat": forecast_caveat(lane),
+        # The same three flat keys engine/predict.py puts in run_summary.json, so
+        # the k-step block persisted on its own still says which weights drew the
+        # curve without anyone parsing the caveat prose.
+        "artifact_lane": lane.name,
+        "demo_model": lane.demo,
+        "demo_model_notice": lane.notice,
         "forecast_file": FORECAST_FILE,
     }
     _write_forecast(out_dir, block)
@@ -195,7 +255,7 @@ def _score(head, X_src: np.ndarray) -> np.ndarray:
 
 
 def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
-                        fpr_budget: float) -> tuple[dict, dict]:
+                        fpr_budget: float, lane=None) -> tuple[dict, dict]:
     """({k: (head, threshold)}, {k: plain-English reason it is unavailable}).
 
     Each of the three ways a horizon can be unusable — never fitted, fitted but
@@ -203,6 +263,13 @@ def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
     gets its OWN message, because the fix differs and "k=8 unavailable" alone
     sends an operator to the wrong one. A horizon is never dropped silently:
     every k the config asks for ends up in exactly one of the two dicts.
+
+    `cfg` must already be the LANE's config: every head, threshold and weight file
+    is read from whatever artifacts directory it points at. `lane` is passed only
+    so the unavailability messages can name the right remedy — on the demo lane
+    "run engine.train_engine" is the wrong advice, and a horizon the small bundled
+    capture cannot fit is expected rather than broken. The published wording is
+    byte-identical to what it has always been.
     """
     from engine import predict as P
     from engine import thresholds as TH
@@ -210,6 +277,14 @@ def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
     heads: dict[int, tuple[object, float]] = {}
     unavailable: dict[int, str] = {}
     kind = _INPUT_KIND.get(variant, variant)
+    demo_tail = ""
+    if lane is not None and getattr(lane, "demo", False):
+        demo_tail = (
+            f" [DEMO LANE {lane.dir}: these are not the published heads. A horizon "
+            "the bundled synthetic capture leaves single-class is not fitted at all "
+            "— re-run `python scripts/bootstrap_demo_artifacts.py`, which records "
+            "why under `demo_provenance.heads_not_fitted`.]"
+        )
     for k in horizons:
         key = TH.horizon_variant(variant, k)
         try:
@@ -219,7 +294,7 @@ def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
                 f"no k={k} forecast head has been fitted for {kind} input: the persisted "
                 f"thresholds carry no '{key}' entry. Run `python -m engine.train_engine` "
                 "to fit and persist the per-horizon heads (artifacts built before the "
-                "k-step heads existed have only the horizon-0 models)."
+                "k-step heads existed have only the horizon-0 models)." + demo_tail
             )
             continue
         try:
@@ -229,7 +304,7 @@ def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
                 f"the k={k} forecast head for {kind} input is persisted but carries no "
                 f"threshold for a {fpr_budget:g} FPR budget, and this run must not borrow "
                 "another horizon's cut. Add that budget to configs/eval.yaml "
-                "`fpr_budgets` and re-run `python -m engine.train_engine`."
+                "`fpr_budgets` and re-run `python -m engine.train_engine`." + demo_tail
             )
             continue
         try:
@@ -239,6 +314,7 @@ def _load_horizon_heads(cfg: dict, variant: str, horizons: list[int],
                 f"the k={k} forecast head for {kind} input is recorded in the persisted "
                 f"thresholds but its weight file is not in artifacts/ ({exc}). Re-run "
                 "`python -m engine.train_engine`, or re-fetch the artifacts bundle."
+                + demo_tail
             )
             continue
         heads[k] = (head, threshold)

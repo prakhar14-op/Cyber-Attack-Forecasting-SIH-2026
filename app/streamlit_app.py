@@ -11,6 +11,25 @@ Panels: upload -> forecast timeline (M10.2) -> explanation (M10.3) -> what-if
 (M10.4) -> ledger verify/tamper/re-verify (M10.5) -> results card (M10.6) ->
 network graph (M10.8) -> k-step risk curve (PS deliverable 3).
 
+Between the upload and the timeline sits the one thing that is not a panel: the
+provenance block. `engine.predict` can load either the PUBLISHED weights or the
+DEMO lane a fresh clone bootstraps from the bundled synthetic capture, and it
+reports which. When it was the demo lane, that fact is stated here — in one
+coloured box, before the first number on the page, with the checkable detail in a
+fold under it — and the individual surfaces where a demo number would be actively
+misleading are marked again where they sit: the threshold metric's own label,
+both server-side charts (inside the PNG, because a screenshot travels without the
+page), the benchmark card, and the k-step panel. Which surfaces those are, which
+of this page's existing disclosures were merged into that block rather than added
+beside it, and why the box is short, is argued in
+app/panels.py::provenance_block.
+
+Counting the boxes is part of the job, not tidiness: this page carried five
+coloured boxes against fifteen result elements on a real demo run, two of them
+over a benchmark section with nothing in it. It now carries three.
+tests/test_app.py::test_the_demo_page_does_not_become_more_warning_than_result
+keeps it that way without letting any single disclosure be deleted to get there.
+
 The k-step panel is deliberately the one panel that leads with its own
 limitation: the head behind it has a ranking signal and no validated operating
 point at any horizon, and a rising curve read as a prediction would be exactly
@@ -139,7 +158,7 @@ def _network_figure(layout: dict):
     return fig
 
 
-def _kstep_figure(curve, host: str, log_scale: bool):
+def _kstep_figure(curve, host: str, log_scale: bool, demo_mark: str = ""):
     """The per-host k-step risk curve (PS deliverable 3), rendered server-side.
 
     Matplotlib like the section-2 timeline, so the page stays offline, and the
@@ -154,10 +173,15 @@ def _kstep_figure(curve, host: str, log_scale: bool):
     somewhere else with no caveat attached is the overclaim in its most portable
     form.
 
-    `log_scale` is decided by panels.kstep_use_log_scale and passed in rather
-    than queried here: every panels call this module makes has to sit inside the
-    section's try (tests/test_app.py walks the AST for that), and a figure
-    builder is not inside one.
+    `log_scale` and `demo_mark` are decided by panels.kstep_use_log_scale and
+    panels.demo_figure_mark and passed in rather than queried here: every panels
+    call this module makes has to sit inside the section's try (tests/test_app.py
+    walks the AST for that), and a figure builder is not inside one.
+
+    `demo_mark` is drawn with `fig.suptitle`, not into the axes, because the axes
+    title is already carrying FORECAST_FIGURE_CAVEAT and one would overdraw the
+    other. It is still inside the rendered PNG, which is the property that
+    matters: both statements travel with a screenshot of this curve.
     """
     fig, ax = plt.subplots(figsize=(11, 3.6), facecolor=COLORS["background"])
     ax.set_facecolor(COLORS["background"])
@@ -204,6 +228,8 @@ def _kstep_figure(curve, host: str, log_scale: bool):
                   color=COLORS["text"])
     ax.set_title(panels.FORECAST_FIGURE_CAVEAT, loc="left", fontsize=8,
                  color=COLORS["alert"])
+    if demo_mark:
+        fig.suptitle(demo_mark, x=0.01, ha="left", fontsize=8, color=COLORS["alert"])
     ax.tick_params(colors=COLORS["text"])
     for spine in ax.spines.values():
         spine.set_color(COLORS["muted"])
@@ -273,13 +299,12 @@ if not input_path:
     st.stop()
 
 st.success(f"Input: `{Path(input_path).name}`")
-if "synthetic_demo" in str(input_path):
-    st.info(
-        "This is a **synthetic, illustrative** capture (not real data, never used for any "
-        "reported metric) — it walks the full kill chain so the demo can show lateral movement "
-        "and exfiltration, which no public dataset contains. See app/assets/README.md.",
-        icon="🧪",
-    )
+# The "this capture is synthetic" note used to render here. It now renders inside
+# panels.provenance_block below, together with WHICH MODEL scored the run — the
+# two facts compound, and a judge who has already scrolled past one provenance
+# box does not read the second. It costs one thing and the trade is deliberate:
+# on a run that fails before the engine returns, the page stops at the error card
+# and the input note is not reached. A failed page shows no numbers either.
 if str(input_path).endswith(".csv"):
     st.warning(
         "CSV input carries flow features only — the packet-level features "
@@ -310,11 +335,41 @@ if st.session_state.get("ran_for") != str(input_path):
         st.stop()
 result = st.session_state.result
 
+# WHAT PRODUCED THE NUMBERS ON THIS PAGE — rendered before the first of them.
+# The metric row below is the first figure a judge sees, so this is the last
+# point at which the disclosure can precede every number, and it is also the
+# earliest: the engine only says which model it loaded once it has run.
+#
+# One block, not three. panels.provenance_block merges the model's provenance,
+# the synthetic input and the missing anonymisation key, and its docstring
+# records what it refuses to merge and why.
+#
+# The coloured box carries the whole disclosure; the expander under it carries the
+# same run in more words. That split is the point: a 459-word box of red is a box
+# a judge skims, and a skimmed disclosure protects nobody. Nothing required to
+# understand that this is a demo run is behind the fold — tests/test_app.py
+# asserts that against the WARNING element alone, ignoring the expander's contents.
+_provenance = panels.provenance_block(result, input_path)
+if _provenance:
+    if _provenance["severity"] == "warning":
+        st.warning(_provenance["text"], icon="🧪")
+    else:
+        st.info(_provenance["text"], icon="🧪")
+    if _provenance["details"]:
+        with st.expander(panels.DEMO_DETAILS_LABEL):
+            st.markdown(_provenance["details"])
+_demo_run = panels.is_demo_model_run(result)
+
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Flows", f"{result['n_flows']:,}")
 m2.metric("Host-windows", f"{result['n_host_windows']:,}")
 m3.metric("Alerts", f"{result['n_alerts']:,}")
-m4.metric("Threshold (1% FPR)", _fmt_threshold(result["threshold"]))
+# The label carries the provenance, because the label is what a screenshot of
+# this row keeps: "Threshold (1% FPR)" on its own reads as a measured operating
+# point of the evaluated system.
+m4.metric(panels.threshold_metric_label(result), _fmt_threshold(result["threshold"]))
+if _demo_run:
+    st.caption(panels.DEMO_METRICS_MARK)
 
 # Frames the IPv4 parser skipped are stated here, before any panel below can be
 # read as a clean result: an unseen capture scores zero alerts, and zero alerts
@@ -326,12 +381,14 @@ if _coverage:
     else:
         st.caption(_coverage["text"])
 
-# Same rule, the other way a run can quietly see less than it appears to: with no
-# anonymisation key the two role features are zeros, which moves every score away
-# from the published ones.
-_role = panels.role_features_degraded_note(result)
-if _role:
-    st.warning(_role["text"], icon="🔑")
+# The other way a run can quietly see less than it appears to — no anonymisation
+# key, so the two role features are zeros — is disclosed in the provenance block
+# above rather than in a box of its own. It is the same class of fact as "which
+# model scored this", it reaches the same conclusion ("not comparable"), and
+# ROLE_FEATURES_DEGRADED_TEXT goes into that block verbatim, so nothing about the
+# mechanism or its fix is lost by moving it. The coverage note above keeps its own
+# box on purpose: it is about what the PARSER read, it has a different fix, and it
+# is the one thing stopping "0 alerts" being read as a quiet network.
 
 # ---------------------------------------------------------------- timeline
 st.header("2 · Forecast timeline")
@@ -360,6 +417,13 @@ try:
             ax.scatter(sub["window_start"] - t0, sub["probability"], s=14, label=stage)
         ax.set_xlabel("seconds since first alert window", color=COLORS["text"])
         ax.set_ylabel("forecast probability", color=COLORS["text"])
+        # Drawn INTO the axes on a demo run, for the same reason the k-step
+        # figure carries FORECAST_FIGURE_CAVEAT: this chart leaves the page as a
+        # screenshot in a deck or a chat, and the banner at the top of the page
+        # does not travel with it. Empty string on a normal run, which
+        # matplotlib renders as no title at all.
+        ax.set_title(panels.demo_figure_mark(result), loc="left", fontsize=8,
+                     color=COLORS["alert"])
         ax.tick_params(colors=COLORS["text"])
         for spine in ax.spines.values():
             spine.set_color(COLORS["muted"])
@@ -392,7 +456,12 @@ if hosts:
                 )
                 st.markdown("**Top contributing features**")
                 st.dataframe(panels.explanation_rows(exp), width="stretch")
-                st.caption(panels.EXPLANATION_VALUE_CAVEAT)
+                # Appended to the caption that is already here rather than added
+                # as a fourth coloured box on this page: the attribution table is
+                # misleading under a demo model in one specific way, and one
+                # sentence is what that costs.
+                st.caption(panels.EXPLANATION_VALUE_CAVEAT
+                           + (f"\n\n{panels.DEMO_EXPLANATION_MARK}" if _demo_run else ""))
             with c2:
                 st.markdown("**Top contributing windows** (where the attack was forming)")
                 tw = exp.get("top_windows") or []
@@ -474,14 +543,27 @@ if status.get("exists"):
 
 # ---------------------------------------------------------------- results
 st.header("6 · Benchmark results (read from results/, never hardcoded)")
-st.warning(panels.BENCHMARK_CAVEAT, icon="📉")
 
+# The tables are read BEFORE their caveats are rendered, because whether there are
+# any rows decides whether either caveat belongs on the page at all. On a fresh
+# clone `results/*.json` is absent, this section has nothing in it, and the two
+# warnings used to render anyway — three coloured boxes above zero results, which
+# is exactly the ratio that makes a working project read as a broken one. The
+# argument for each, and for keeping them two boxes rather than one, is in
+# panels.benchmark_caveats.
 fh = card = None
 try:
     fh = panels.forecast_horizons()
     card = panels.results_card()
 except Exception as exc:
     _error_card(exc)
+
+_has_rows = ((fh is not None and not fh.empty) or (card is not None and not card.empty))
+# Not inside the try above: a failure reading results/ must not also be the thing
+# that removes this section's disclosure. It is a pure reader of one dict and one
+# boolean (argued in tests/test_app.py::UNGUARDED_PANEL_CALLS).
+for _caveat in panels.benchmark_caveats(result, _has_rows):
+    st.warning(_caveat, icon="📉" if _caveat == panels.BENCHMARK_CAVEAT else "🧪")
 
 if fh is not None and card is not None and fh.empty and card.empty:
     # A bare header with nothing under it reads as a broken panel on camera.
@@ -505,6 +587,9 @@ st.caption(
     "for the IP), **edges are flows**. Node colour and size grow with forecast "
     "probability; **edges leaving an alerting host glow red**. Drag to rotate, scroll "
     "to zoom."
+    # One sentence onto an existing caption, not a fifth box: the graph's numeric
+    # surface is its 0-1 colour bar, and that is the claim that needs qualifying.
+    + (f"\n\n{panels.DEMO_GRAPH_MARK}" if _demo_run else "")
 )
 _gnodes = (result.get("graph") or {}).get("nodes", [])
 if not _gnodes:
@@ -570,6 +655,13 @@ else:
 # this section, including the ones where no curve is ever drawn.
 st.header("8 · k-step forecast — the next k windows (PS deliverable 3)")
 st.warning(panels.FORECAST_HEADER_CAVEAT, icon="🚧")
+# FORECAST_HEADER_CAVEAT quotes AUROC and episode figures measured on the
+# evaluated k-step heads. Under the demo model those figures sit directly above a
+# curve a different model drew, which turns the project's most carefully worded
+# caveat into an implied specification of the toy. Said here rather than folded
+# into that caveat, whose wording is pinned to docs/limitations.md.
+if _demo_run:
+    st.caption(panels.DEMO_FORECAST_MARK)
 
 # The forecaster re-runs the pipeline, so its result is cached per input exactly
 # as the nowcast is: a widget interaction must not re-run it, and must not
@@ -611,7 +703,8 @@ else:
                 st.info(panels.FORECAST_NO_CURVE_TEXT, icon="📭")
             else:
                 st.pyplot(_kstep_figure(plottable, k_pick,
-                                        panels.kstep_use_log_scale(plottable)))
+                                        panels.kstep_use_log_scale(plottable),
+                                        panels.demo_figure_mark(result)))
                 if len(plottable) < len(curve):
                     # Said, not smoothed over: a line drawn through a horizon the
                     # engine returned nothing for would invent the missing point.
@@ -627,7 +720,12 @@ else:
             # rendered verbatim. It travels in the engine's return value for
             # exactly this purpose, and showing it means the page tracks the
             # engine's finding instead of reciting a constant of its own.
-            engine_caveat = panels.kstep_engine_caveat(fc)
+            # On a demo run engine.forecast prepends the same demo notice this
+            # page already renders in full at the top, so the repeated copy is
+            # removed here and only the part a reader has not already seen is
+            # shown. Nothing is paraphrased: an exact match, or nothing.
+            engine_caveat = panels.without_repeated_demo_notice(
+                panels.kstep_engine_caveat(fc), result)
             if engine_caveat:
                 st.caption(f"**engine.forecast states:** {engine_caveat}")
 
