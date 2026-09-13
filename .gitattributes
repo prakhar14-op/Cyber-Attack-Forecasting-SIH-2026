@@ -1,0 +1,146 @@
+# Line-ending and file-type rules, owned by the repository.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Every tracked text file here is already stored LF in the index, but only
+# because each developer happens to have `core.autocrlf` set. That is a
+# per-machine setting, not a property of the project. Measured on the machine
+# these rules were written on, `git config --show-origin --get-all
+# core.autocrlf` answers `true` from
+#   C:/Program Files/Git/etc/gitconfig   (system, i.e. per-installation)
+#   C:/Users/<user>/.gitconfig           (user, i.e. per-developer)
+# and from nothing inside this repository. A contributor who clones with it
+# unset commits CRLF, and the next diff of that file is the whole file.
+# Attributes move the guarantee into the repo, where it reaches everyone who
+# clones it.
+#
+# State before these rules, from `git ls-files --eol` over all 178 tracked
+# files: the `attr/` column was EMPTY for every one of them -- no attribute was
+# in effect anywhere -- with 160 text files at `i/lf`, 8 auto-detected binaries
+# at `i/-text`, and 10 empty files at `i/none`. In the working tree 145 were
+# CRLF and 15 were LF, which is the mixture that produces the warning below.
+
+# ---------------------------------------------------------------- text default
+# Everything Git detects as text: LF in the index, and LF in the working tree.
+#
+# `eol=lf` is the half that is easy to leave out and is doing real work.
+# `* text=auto` on its own guarantees LF in the index, which is the repo-level
+# guarantee -- but it leaves the checkout conversion in place, so on Windows the
+# working tree still gets CRLF and `git add` still prints
+#
+#   warning: in the working copy of '<path>', LF will be replaced by CRLF
+#   the next time Git touches it
+#
+# which is the other symptom this file was written to remove. Both spellings
+# were measured in a throwaway clone against a file rewritten to LF: under
+# `* text=auto` alone the warning still fired; under `eol=lf` it stopped.
+#
+# WHAT THIS DOES NOT DO, MEASURED RATHER THAN ASSUMED. It rewrites nothing that
+# is already committed: all 160 text files are LF in the index today, so
+# `git add --renormalize .` under these rules produces zero changes, and adding
+# this file left `git status` clean. Working-tree files are converted the next
+# time Git writes them -- a fresh clone, a checkout, a reset -- not now.
+#
+# The consequence is a transition, and the honest form of the claim above has
+# three cases rather than one:
+#
+#   * A FRESH CLONE under these rules gets LF on disk for every text file.
+#     Editing one and `git add`ing it prints nothing. This is the end state and
+#     it is the one the warning was about.
+#   * AN EXISTING WORKING TREE still holds CRLF for files checked out before
+#     this file existed. Editing one of those now prints the SAME warning with
+#     the direction reversed -- "CRLF will be replaced by LF" -- until that file
+#     is next written by Git. Measured on this repository: `git diff` on an
+#     edited document prints exactly that line. It is transitional, not a new
+#     defect, and `git status` stays clean throughout.
+#   * A `.ps1` HELD AT CRLF by the exception below still warns if some tool
+#     writes LF into it, because that is a real conversion the exception asks
+#     for. Measured: appending an LF-terminated line to
+#     `scripts/reproduce_results.ps1` in a fresh clone printed "LF will be
+#     replaced by CRLF". Two tracked files can do this.
+#
+# The cost, stated plainly: after the transition a Windows checkout holds LF on
+# disk rather than CRLF. Python, Git, Streamlit, VS Code and PowerShell all read
+# LF; a tool that cannot is the reason the exception section below exists.
+* text=auto eol=lf
+
+# ------------------------------------------------- exceptions that keep CRLF
+# The two tracked PowerShell scripts (`scripts/reproduce_results.ps1`,
+# `scripts/build_vendor.ps1`) are the scripts a judge or a presenter runs on
+# Windows, and this keeps them on disk in the byte form they have today.
+#
+# STATED HONESTLY, BECAUSE THE OBVIOUS JUSTIFICATION IS THE ONE THAT DID NOT
+# SURVIVE MEASUREMENT: this exception is NOT repairing a failure that was
+# reproduced. Both scripts were checked out LF-only in a fresh clone with this
+# section deleted, and
+# `[System.Management.Automation.Language.Parser]::ParseFile` under Windows
+# PowerShell 5.1.26100.9444 returned 0 parse errors for each. An LF-only
+# `.cmd` with labels, `call` and a parenthesised block also ran correctly under
+# cmd.exe on the same machine. So the claim this rule can carry is the smaller
+# one: it holds the Windows scripts at the endings Windows tooling emits, and
+# it keeps a future Authenticode signature block -- which is computed over the
+# file's bytes -- from being invalidated by a checkout. It is not a fix for a
+# break measured here, and it should not be described as one.
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+
+# ------------------------------------ never convert, never diff, never merge
+# `binary` expands to `-text -diff -merge`: no end-of-line conversion in either
+# direction, and no attempt to treat the bytes as lines.
+#
+# These are NOT redundant with Git's auto-detection, and the reason is the
+# whole point of the section. Auto-detection is a heuristic over the first 8000
+# bytes: a file with no NUL byte in that window is treated as text. It happens
+# to classify all 8 binaries tracked here correctly today, which is exactly
+# what makes omitting these rules easy to argue for and expensive later.
+#
+# Measured against a plausible break -- a capture of plain-text HTTP with no
+# NUL byte in its first 8000, which is the next thing `capture/capture.sh`
+# would record: under `* text=auto eol=lf` with no rule below, `git add`
+# classified it as text and the blob Git stored was 540 bytes SHORTER than the
+# file on disk, one byte per CR, with no error and only a warning that read
+# like a formatting note. With `*.pcap binary` the same file round-tripped
+# byte-identical. A file type whose bytes are not lines belongs in this list.
+*.pcap   binary
+*.pcapng binary
+*.cap    binary
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+
+*.pdf  binary
+*.pptx binary
+*.docx binary
+*.xlsx binary
+
+*.zip binary
+*.gz  binary
+*.xz  binary
+*.whl binary
+
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+
+# Model artifacts. `.gitignore` keeps these out of the repository and CLAUDE.md
+# forbids committing them, so none is tracked and none should be. The rules are
+# here for the case where that is bypassed with `git add -f`: a weight file
+# silently altered on checkout fails its SHA-256 in
+# `scripts/verify_weights.py`, a long way from the commit that caused it.
+*.pkl    binary
+*.joblib binary
+*.pt     binary
+*.pth    binary
+*.onnx   binary
+*.npy    binary
+*.npz    binary
+
+# ------------------------------------------------------------------- SVG note
+# `docs/img/*.svg` stays under the text default deliberately: it is XML, it is
+# reviewed as a diff, and `tests/test_docs_claims.py` reads its `<text>` labels
+# as prose a judge sees on a slide.

@@ -203,6 +203,33 @@ schema:
   label: Label
 
 anonymisation:
+  # Which IP-derived role features enter the 30-column window matrix.
+  #
+  # `net24_bucket` is DROPPED, and the reason is not the metric. It is a hashed
+  # /24 bucket of the source address, so an attacker re-rolls it by renting a
+  # different VPS (docs/threat_model.md) — a feature the adversary controls
+  # cannot be trusted to carry weight in deployment, however well it scores.
+  #
+  # The measurement, both arms under this key, is in results/accuracy_experiment
+  # .json and reproduces with `python scripts/accuracy_experiment.py`:
+  #   xgb WITH net24   : val AUROC 0.758 | test F1 0.234, recall 0.185, lead 4210 s
+  #   xgb WITHOUT      : val AUROC 0.740 | test F1 0.388, recall 0.460, lead 5148 s
+  # Validation cannot separate the arms (0.018 AUROC, 0.001 F1 — both inside the
+  # noise of a one-family val day), so the val rule this project normally selects
+  # on does not decide it. Test shows a large F1/recall gain, but promoting on a
+  # test win is the exact error this project was audited for, so it is NOT the
+  # reason either; it is recorded as the consequence.
+  #
+  # `lstm` flips the other way (val 0.869 without vs 0.793 with; test 0.652 vs
+  # 0.865), which is a fair warning about how noisy n = 2 episodes on one
+  # attacker host makes all of this.
+  # NOT YET PROMOTED. The published table in README.md and docs/architecture.md
+  # was measured with both features, so shipping [internal] here while those rows
+  # stand would mean the config and the numbers describe different models. The
+  # promotion requires regenerating EVERY row under one matrix — including tgn
+  # and tgn_graft, which cost hours — and that run has not been completed. Change
+  # this to [internal] and regenerate all rows together, or leave it as is.
+  role_features: [internal, net24_bucket]
   method: hmac_sha256               # keyed HMAC pseudonyms; the key is never committed
   key_env_var: SIH26_HMAC_KEY
   per_epoch_permutation: true       # re-permute node ids every epoch (anti-memorisation)

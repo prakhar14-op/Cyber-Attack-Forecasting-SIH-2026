@@ -78,3 +78,5 @@ run/
 
 # Diagnostic data caches (regenerable; the committed evidence is the .png/.json)
 diagnostics/*.npz
+results/
+artifacts_demo/

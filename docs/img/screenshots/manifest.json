@@ -1,0 +1,352 @@
+{
+  "schema": 1,
+  "generated_by": "scripts/capture_screenshots.py",
+  "captured_utc": "2026-09-12T11:30:37Z",
+  "app": "app/streamlit_app.py",
+  "input": "app/assets/synthetic_demo.pcap",
+  "artifact_lane": "demo",
+  "demo_lane_dir": "artifacts_demo",
+  "demo_lane_bootstrapped_by_this_run": true,
+  "served_from": "an isolated copy of this checkout with no artifacts/",
+  "published_artifacts_dir_on_capture_machine": [
+    "feature_names.json",
+    "window_scaler.pkl"
+  ],
+  "demo_weights_sha256_file_digest": "c0089c91c1fcfaf4e3de46163a8d9874ff07d731453e660abbe9bae5cb7ddd41",
+  "viewport": {
+    "width": 1500,
+    "height": 1800,
+    "device_scale_factor": 1
+  },
+  "provenance_statement": "Every image in this directory was captured against the DEMO model, fitted by scripts/bootstrap_demo_artifacts.py from app/assets/synthetic_demo.pcap — a small hand-authored synthetic capture bundled with this repository. The model was fitted on that capture and its alert thresholds were chosen on the same rows, so it has memorised it. No probability, alert count, threshold, host ranking or feature attribution visible in these images reproduces, corroborates or approximates any figure this project publishes, and none of them saw CSE-CIC-IDS-2018: they are not comparable with those figures — not a weaker version of them. They show what the software does, not how well it does it.",
+  "demo_run_facts": {
+    "metric_row": [
+      "Flows = 1,641",
+      "Host-windows = 174",
+      "Alerts = 54",
+      "Threshold (1% FPR — DEMO model) = 0.9898",
+      "Records = 54",
+      "Chain verifies = yes",
+      "Anchored to checkpoint = yes"
+    ]
+  },
+  "images": [
+    {
+      "file": "01-forecast-timeline.png",
+      "title": "Forecast timeline and triage ranking, under the demo-model banner",
+      "caption": "The demo app after scoring the bundled synthetic capture: the provenance banner, the run's four metrics, the per-window forecast timeline against the alert threshold, and the host triage table. Every number is the DEMO model's and is not comparable to any published figure.",
+      "sha256": "c7207ba610ce6a1ed898918fdd565c220b3624c0092fe171e6eb2b48a37a22db",
+      "bytes": 244567,
+      "pixels": [
+        1500,
+        1298
+      ],
+      "region": {
+        "top_anchor": [
+          "alert",
+          "provenance-banner"
+        ],
+        "bottom_anchor": [
+          "header",
+          "3 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 1298
+        }
+      },
+      "provenance_in_frame": true,
+      "provenance_markers_in_frame": [
+        "provenance-banner",
+        "threshold-metric-label",
+        "metrics-mark"
+      ],
+      "no_marker_reason": "",
+      "checks": {
+        "chart_images": 1,
+        "plotly_canvases": 0,
+        "distinct_colours": 9982,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 42,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 558
+      },
+      "notes": "Cropped from the banner rather than from the section-2 header on purpose: this is the frame most likely to be lifted into a slide, so the disclosure is inside it.",
+      "failed_checks": []
+    },
+    {
+      "file": "02-host-explanation.png",
+      "title": "Per-host explanation in named features",
+      "caption": "Section 3 of the demo app: the top contributing NAMED features behind one host's alert (never embedding dimensions), the windows the evidence came from, and the flagged flows. The attributions explain the DEMO model's decision about invented traffic.",
+      "sha256": "7205002e2fcb8c88acf75c85d67969037c624f88a027ab278db95d9abbc5b456",
+      "bytes": 99133,
+      "pixels": [
+        1500,
+        660
+      ],
+      "region": {
+        "top_anchor": [
+          "header",
+          "3 ·"
+        ],
+        "bottom_anchor": [
+          "header",
+          "4 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 660
+        }
+      },
+      "provenance_in_frame": true,
+      "provenance_markers_in_frame": [
+        "explanation-mark"
+      ],
+      "no_marker_reason": "",
+      "checks": {
+        "chart_images": 0,
+        "plotly_canvases": 0,
+        "distinct_colours": 2474,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 23,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 58
+      },
+      "notes": "",
+      "failed_checks": []
+    },
+    {
+      "file": "03-ledger-verified.png",
+      "title": "Audit ledger — chain verifies",
+      "caption": "Section 5 of the demo app: the hash-chained forecast ledger for this run, verifying, with its anchor checkpoint. The record count is the number of alerts the DEMO model raised on the bundled synthetic capture, so it is a demo figure like every other number in these images; what the frame shows about the LEDGER (that a chain of that length verifies, and the command that re-verifies it) is a property of ledger/, not of the model.",
+      "sha256": "929181393dfe0f2b895665b3af58e874526d61874fa8c15cfd11236e004009ad",
+      "bytes": 23753,
+      "pixels": [
+        1500,
+        306
+      ],
+      "region": {
+        "top_anchor": [
+          "header",
+          "5 ·"
+        ],
+        "bottom_anchor": [
+          "header",
+          "6 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 306
+        }
+      },
+      "provenance_in_frame": false,
+      "provenance_markers_in_frame": [],
+      "no_marker_reason": "The app renders no demo mark in this section, and this script will not draw one into the pixels: an overlay the app did not render is a fabricated screenshot. Provenance for this frame therefore travels in the caption, the manifest row and docs/img/screenshots/README.md — weaker than a banner in frame, and stated as such.",
+      "checks": {
+        "chart_images": 0,
+        "plotly_canvases": 0,
+        "distinct_colours": 1584,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 24,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 58
+      },
+      "notes": "",
+      "failed_checks": []
+    },
+    {
+      "file": "04-network-graph-3d.png",
+      "title": "3D network attack graph",
+      "caption": "Section 7 of the demo app: the host graph the TGN encoder operates on — nodes are devices, edges are flows, edges leaving an alerting host glow red. Node colour is the DEMO model's score on synthetic traffic, not a calibrated probability.",
+      "sha256": "38d165dade864bbec89f4ceba8778d3be769a33eeca3d36d04ca048c66d6842f",
+      "bytes": 58608,
+      "pixels": [
+        1500,
+        865
+      ],
+      "region": {
+        "top_anchor": [
+          "header",
+          "7 ·"
+        ],
+        "bottom_anchor": [
+          "header",
+          "8 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 865
+        }
+      },
+      "provenance_in_frame": true,
+      "provenance_markers_in_frame": [
+        "graph-mark"
+      ],
+      "no_marker_reason": "",
+      "checks": {
+        "chart_images": 0,
+        "plotly_canvases": 1,
+        "distinct_colours": 2307,
+        "canvas_distinct_colours": 341,
+        "longest_repeated_band_rows": 113,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 24
+      },
+      "notes": "The non-blank check is on the canvas rect, not on the whole crop: the caption and controls around it would keep a crop colourful while the WebGL surface under them was empty.",
+      "failed_checks": []
+    },
+    {
+      "file": "05-kstep-forecast-curve.png",
+      "title": "k-step forecast risk curve, behind its caveat",
+      "caption": "Section 8 of the demo app: the k-step risk curve for one host, the per-horizon evidence table, and the caveat that is rendered BEFORE the chart — there is no supported forward-forecast operating point, and the AUROC figures in that caveat belong to the evaluated k-step heads, not to the demo model that drew this curve.",
+      "sha256": "88b72e2ba0ddb94ad556594001f8d584d62fd2ae28895b1973bbdc3d6f58ec35",
+      "bytes": 326863,
+      "pixels": [
+        1500,
+        1294
+      ],
+      "region": {
+        "top_anchor": [
+          "header",
+          "8 ·"
+        ],
+        "bottom_anchor": null,
+        "css_rect": {
+          "x": 0,
+          "y": 361,
+          "width": 1500,
+          "height": 1294
+        }
+      },
+      "provenance_in_frame": true,
+      "provenance_markers_in_frame": [
+        "kstep-mark"
+      ],
+      "no_marker_reason": "",
+      "checks": {
+        "chart_images": 1,
+        "plotly_canvases": 0,
+        "distinct_colours": 7827,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 35,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 892
+      },
+      "notes": "",
+      "failed_checks": []
+    },
+    {
+      "file": "06-demo-provenance-banner.png",
+      "title": "Demo-provenance disclosure, with the engine's own record unfolded",
+      "caption": "The disclosure the app puts above every number on the page, with the fold opened: what the demo model is, why it exists, and the engine's own record of the lane it loaded. This is the frame that says what the other frames are pictures of.",
+      "sha256": "f125510eb98ec571950c3d5e68c06e641ddc04760e308762f7d5f10678ac23b2",
+      "bytes": 245481,
+      "pixels": [
+        1500,
+        1040
+      ],
+      "region": {
+        "top_anchor": [
+          "alert",
+          "provenance-banner"
+        ],
+        "bottom_anchor": [
+          "header",
+          "2 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 1040
+        }
+      },
+      "provenance_in_frame": true,
+      "provenance_markers_in_frame": [
+        "provenance-banner",
+        "threshold-metric-label",
+        "metrics-mark"
+      ],
+      "no_marker_reason": "",
+      "checks": {
+        "chart_images": 0,
+        "plotly_canvases": 0,
+        "distinct_colours": 4624,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 25,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 118
+      },
+      "notes": "",
+      "failed_checks": []
+    },
+    {
+      "file": "07-ledger-tampered.png",
+      "title": "Audit ledger — tamper detected",
+      "caption": "The same ledger panel after the demo's 'Tamper with record 0' button edits one record in place: the chain stops verifying and the panel names the record it broke at. Tamper-evidence is a property of ledger/, exercised here on a DEMO run's chain.",
+      "sha256": "8a88954f9c963846bafa54cdb7c64541b7b1b68a2bcc5c5fbb890dcc1954f8d1",
+      "bytes": 32569,
+      "pixels": [
+        1500,
+        378
+      ],
+      "region": {
+        "top_anchor": [
+          "header",
+          "5 ·"
+        ],
+        "bottom_anchor": [
+          "header",
+          "6 ·"
+        ],
+        "css_rect": {
+          "x": 0,
+          "y": 60,
+          "width": 1500,
+          "height": 378
+        }
+      },
+      "provenance_in_frame": false,
+      "provenance_markers_in_frame": [],
+      "no_marker_reason": "Same as 03-ledger-verified: no demo mark is rendered in this section and none is painted in. The caption carries it.",
+      "checks": {
+        "chart_images": 0,
+        "plotly_canvases": 0,
+        "distinct_colours": 2243,
+        "canvas_distinct_colours": null,
+        "longest_repeated_band_rows": 31,
+        "longest_repeated_band_distinct_rows": 1,
+        "longest_repeated_band_offset_px": 144
+      },
+      "notes": "Captured last. It mutates the run's ledger file, and every earlier frame would have to be re-taken after it.",
+      "failed_checks": []
+    }
+  ],
+  "failed_checks": [],
+  "shots_declared": [
+    "01-forecast-timeline",
+    "02-host-explanation",
+    "03-ledger-verified",
+    "04-network-graph-3d",
+    "05-kstep-forecast-curve",
+    "06-demo-provenance-banner",
+    "07-ledger-tampered"
+  ],
+  "shots_captured": [
+    "01-forecast-timeline",
+    "02-host-explanation",
+    "03-ledger-verified",
+    "04-network-graph-3d",
+    "05-kstep-forecast-curve",
+    "06-demo-provenance-banner",
+    "07-ledger-tampered"
+  ]
+}

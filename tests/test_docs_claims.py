@@ -486,6 +486,16 @@ BANNED: tuple[BannedClaim, ...] = (
             # and stopped before its object, so it exempts this sentence and
             # nothing that could be written after it.
             "The audit retired the cascade claim after proving",
+            # scripts/build_idea_deck.py carries a guard of its own that BANS this
+            # claim from the idea deck, so the banned words appear in the rule that
+            # forbids them. Anchored to each phrasing the guard uses, not to the
+            # surrounding code, so a real reintroduction elsewhere in that file
+            # still fails.
+            "the engine is a cascade or ensemble",
+            "the engine is a SINGLE XGBoost model, not a cascade",
+            "engine-is-a-cascade",
+            "not a chain. Slide 3 draws two lanes, and 'cascade' or 'ensemble' is",
+            "a cascade of two models",
         ),
         retired_sentences=(
             "the deployed scorer is the cascade's fast tier",
