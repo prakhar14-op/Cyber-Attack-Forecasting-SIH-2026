@@ -1,8 +1,9 @@
 # Attack scenarios (M11.2)
 
-Exact commands and timings for the lab capture. The point of this capture is the two stages
-CIC-IDS-2018 lacks — **lateral_movement** and **exfiltration** — plus a **slow-scan** variant to
-measure lead-time degradation. Read `CONSENT.md` first. Targets and credentials are team-owned
+Exact commands and timings for the lab capture. The point of this capture is the three stages
+our labelled data has **zero windows** for: **lateral_movement** and **exfiltration**, which
+CIC-IDS-2018 lacks entirely, and **recon**, which the four days we fetched never label. It adds
+a **slow-scan** variant to measure lead-time degradation. Read `CONSENT.md` first. Targets and credentials are team-owned
 only; the network is isolated.
 
 Roles (static IPs set before capture, see `capture.sh`):

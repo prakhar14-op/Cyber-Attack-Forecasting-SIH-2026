@@ -7,6 +7,31 @@ headless = true
 enableCORS = false
 enableXsrfProtection = true
 fileWatcherType = "none"
+# The CSV path expands each flow into every 15 s window it overlaps, so parse
+# cost scales with flows x windows-per-flow. Measured on this repo's extractor:
+# 50k flows at the 120 s flow timeout expand to ~1.4M rows in 2.6 s, so a 50 MB
+# CSV (~110k flows) stays inside a few seconds of a live demo. Streamlit rejects
+# anything larger in the browser; app/panels.check_upload_size reads THIS value
+# so the server-side guard cannot drift from it.
+maxUploadSize = 50
+
+# A hackathon projector runs the light theme and washes out mid-greys, which
+# made the transparent-background 3D graph's near-white labels invisible.
+# Pin a dark SOC palette so the presenter's laptop and the hall projector agree.
+# app/panels.theme_colors() reads THIS block and the figures take their colours
+# from it, so a chart can never assume a background the page does not have.
+[theme]
+base = "dark"
+backgroundColor = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#e6edf3"
+borderColor = "#30363d"
+primaryColor = "#ff8a3d"
+linkColor = "#58a6ff"
+redColor = "#ff5a5a"
+orangeColor = "#ff8a3d"
+greenColor = "#3fb950"
+grayColor = "#8b949e"
 
 [global]
 showWarningOnDirectExecution = false

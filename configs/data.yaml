@@ -16,6 +16,61 @@ paths:
   splits: data/splits.yaml
   fixture_csv: tests/fixtures/mini.csv
 
+# The DEMO LANE — a second, clearly-separated set of engine artifacts fitted by
+# scripts/bootstrap_demo_artifacts.py from the small synthetic capture that
+# ships in this repository, so that a fresh clone with no `artifacts/` and no
+# dataset can still execute the pipeline end to end.
+#
+# It is NOT the published model and nothing it outputs is comparable to a
+# published number: it is fitted on one 454-second hand-authored capture and
+# its thresholds are chosen on the same rows, so it has memorised that capture.
+# The separation is enforced in code, not only here:
+#   - `artifacts_dir` is never `paths.artifacts_dir`, and the bootstrap refuses
+#     to run if the target is the published directory or already holds published
+#     weights;
+#   - the persisted thresholds carry `artifact_lane: demo`, and
+#     engine/thresholds.py refuses to serve that lane from any directory but
+#     this one — so copying the demo lane into `artifacts/` fails loudly;
+#   - `model_prefix` keeps every demo weight file out of the name set
+#     tests/_stubs.py `engine_artifacts_present()` gates the end-to-end tests on,
+#     so building this lane cannot turn those skips green.
+demo:
+  artifacts_dir: artifacts_demo
+  pcap: app/assets/synthetic_demo.pcap
+  operator_log: app/assets/synthetic_demo.operator-log.txt
+  # Filename prefix for every demo weight. Changing it to "" would collide with
+  # the published weight names; tests/test_demo_bootstrap.py pins that it does
+  # not, so the collision fails the suite instead of passing silently.
+  model_prefix: demo_
+  # Own seed, not `seed` above: the demo fit is reproducible independently of
+  # any retuning of the dataset pipeline's seed.
+  seed: 1337
+  # OpenMP threads for the fit. Seeding alone does NOT make the saved weights
+  # byte-identical: models/baselines.py builds the head with n_jobs=-1, and
+  # XGBoost's parallel histogram build depends on the thread count. MEASURED on
+  # the real demo matrix (174 host-windows x 30 features), same seed, only this
+  # value moving — demo_engine_model.json was
+  #   d428729d3562...  at fit_threads: 1
+  #   1003f2454f32...  at fit_threads: 4
+  #   bc7fdd07d9dc...  at this machine's 12 cores (cpu_count 12)
+  # while window_scaler.pkl was 9f8351d521f3... at every one of them, being a
+  # single-threaded sklearn pickle. 1 makes the bytes a property of the capture
+  # rather than of the machine's core count.
+  #
+  # THE PIN ONLY BINDS IN A PROCESS THAT HAS NOT YET IMPORTED XGBOOST. OpenMP
+  # fixes the thread count at that import, so this value reaches the fit only
+  # when `scripts/bootstrap_demo_artifacts.py` runs as a script. Measured this
+  # session: in a process that did a bare `import xgboost` first, fit_threads 1
+  # and 4 BOTH produced bc7fdd07d9dc... — the machine's default — while the lane
+  # would have recorded the number it was asked for. The script detects that and
+  # refuses rather than recording a thread count it did not apply; a lane built
+  # any other way carries `weights_reproducible: false`.
+  #
+  # The pin is an environment variable, so `bootstrap` restores whatever was
+  # there when it returns. It must reach OpenMP, but it must not outlive the fit
+  # and re-thread a test suite that called this in-process.
+  fit_threads: 1
+
 dataset:
   name: cse-cic-ids2018
   s3_bucket: s3://cse-cic-ids2018
@@ -57,6 +112,29 @@ windows:
   max_sequence_windows: 48          # 4 min of context
   forecast_horizon_windows: 8       # K = 8 -> 40 s ahead
 
+# The DEPLOYED engine's K-step forward forecast (engine/train_engine.py fits the
+# per-horizon heads, engine/forecast.py serves them). Nothing here is a claim
+# that forward forecasting works: at the shipped 1 % FPR budget the measured
+# k-step operating point fires 0 of 2 episodes at k = 1, 4 and 8 alike
+# (docs/limitations.md). These keys decide WHAT IS BUILT, not what is claimed.
+engine:
+  # Horizons in windows. seconds_ahead = k * windows.stride_seconds, so
+  # [1, 4, 8] is +5 s / +20 s / +40 s. Overlapping windows (15 s on a 5 s
+  # stride) mean k=1 and k=2 are near-nowcasts; only k>=3 is structurally ahead
+  # of the present.
+  # This list must stay a SUBSET of configs/eval.yaml `horizons`: a horizon the
+  # engine ships a model for is a horizon whose forecast quality the harness
+  # actually reports, and shipping an unevaluated k would be a capability with
+  # no published evidence behind it. Pinned by
+  # tests/test_forecast_engine.py::test_engine_horizons_are_a_subset_of_the_evaluated_ones.
+  forecast_horizons: [1, 4, 8]
+  # Source windows per host the k-step heads score forward FROM: the newest N of
+  # that host's windows, i.e. N * stride_seconds = 60 s of recent history at the
+  # shipped 5 s stride. Bounds the forecast output at len(forecast_horizons) * N
+  # rows per host on an arbitrarily long capture; `per_host_curve` uses only the
+  # newest of them.
+  forecast_source_windows_per_host: 12
+
 # The 7 stage classes. List order IS the label encoding — never reorder.
 stages:
   - benign
@@ -66,6 +144,30 @@ stages:
   - c2
   - exfiltration
   - impact
+
+# Thresholds for engine/predict.py:_infer_stage. The deployed engine model is
+# binary attack/benign; stage granularity comes from these interpretable rules,
+# so they are calibration constants that live here and never in the module.
+# Every value is per 15 s WINDOW, and none of them is measured yet: stage
+# accuracy is TBD until a labelled stage evaluation lands.
+# KNOWN WEAKNESS (test_engine.py::test_paced_randomised_scan_evades_the_stage_rules):
+# a fixed per-window threshold falls with the attacker's pacing, so a 15x slower
+# port-randomised sweep drops under every rule below. It then reports
+# `unclassified` — no rule matched — rather than a confident wrong stage.
+# Each key names its own comparison against the feature: `_gt` is `feature >
+# value`, `_lte` is `feature <= value`, `_lt` is `feature < value`. A bare `_max`
+# hid that difference and mis-stated the real maximum by one.
+# engine/technique_map.yaml reads the shared thresholds from here by name
+# (`stage_rule:<key>`) instead of repeating the literals, so recalibrating a
+# value here cannot leave the stage and its technique contradicting each other.
+stage_rules:
+  exfiltration_sent_bytes_gt: 50000      # bulk outbound in one window
+  exfiltration_distinct_dst_ips_lte: 2   # to a single peer, not a sweep
+  exfiltration_syn_lt: 10                # an established transfer opens few connections
+  scan_distinct_dst_ports_gt: 20
+  scan_sequential_port_ratio_gt: 0.5     # sequential vs randomised port order
+  initial_access_syn_gt: 30              # many SYNs, unmatched by ACKs
+  impact_sent_pkts_gt: 500
 
 # Unit of prediction is (source_host, window); the network-level score is the max
 # over host scores in the window.
@@ -101,6 +203,33 @@ schema:
   label: Label
 
 anonymisation:
+  # Which IP-derived role features enter the 30-column window matrix.
+  #
+  # `net24_bucket` is DROPPED, and the reason is not the metric. It is a hashed
+  # /24 bucket of the source address, so an attacker re-rolls it by renting a
+  # different VPS (docs/threat_model.md) — a feature the adversary controls
+  # cannot be trusted to carry weight in deployment, however well it scores.
+  #
+  # The measurement, both arms under this key, is in results/accuracy_experiment
+  # .json and reproduces with `python scripts/accuracy_experiment.py`:
+  #   xgb WITH net24   : val AUROC 0.758 | test F1 0.234, recall 0.185, lead 4210 s
+  #   xgb WITHOUT      : val AUROC 0.740 | test F1 0.388, recall 0.460, lead 5148 s
+  # Validation cannot separate the arms (0.018 AUROC, 0.001 F1 — both inside the
+  # noise of a one-family val day), so the val rule this project normally selects
+  # on does not decide it. Test shows a large F1/recall gain, but promoting on a
+  # test win is the exact error this project was audited for, so it is NOT the
+  # reason either; it is recorded as the consequence.
+  #
+  # `lstm` flips the other way (val 0.869 without vs 0.793 with; test 0.652 vs
+  # 0.865), which is a fair warning about how noisy n = 2 episodes on one
+  # attacker host makes all of this.
+  # NOT YET PROMOTED. The published table in README.md and docs/architecture.md
+  # was measured with both features, so shipping [internal] here while those rows
+  # stand would mean the config and the numbers describe different models. The
+  # promotion requires regenerating EVERY row under one matrix — including tgn
+  # and tgn_graft, which cost hours — and that run has not been completed. Change
+  # this to [internal] and regenerate all rows together, or leave it as is.
+  role_features: [internal, net24_bucket]
   method: hmac_sha256               # keyed HMAC pseudonyms; the key is never committed
   key_env_var: SIH26_HMAC_KEY
   per_epoch_permutation: true       # re-permute node ids every epoch (anti-memorisation)

@@ -13,11 +13,15 @@ the annotated attack completion) at a fixed false-positive budget — not by F1.
 
 ## 2. Pipeline
 
-```
-PCAP / CSV ─► extract ─► window features ─► TGN encoder ─► forecast head ─► engine ─► ledger
-             (packets)   30 named, window-   (temporal      (horizon k)     (explain,  (hash chain
-                          bounded             graph memory)                  threshold) + Merkle)
-```
+![Data flow. PCAP or CSV input is parsed by the streaming extractor into 30 named,
+window-bounded features; that one matrix feeds two lanes. The deployed lane, drawn solid, is the
+XGBoost scorer, a threshold fitted from a validation FPR budget, TreeSHAP named-feature
+explanations with an ATT&CK technique, and the tamper-evident ledger. The evaluation-only lane,
+drawn dashed, is the TGN encoder, the GRAFT causal transformer, the k-step forecast head and the
+rank-mean fusion; none of it runs in the engine.](img/01-architecture-dataflow.svg)
+
+`docs/img/02-model-stack.svg` carries the same split per component with each one's measured
+status, including the RSSM world model — a negative result that does not ship.
 
 **Ingest & features.** A single streaming extractor (`data/packet_features.py`) parses pcap
 bytes with raw struct offsets (~110k packets/s, bounded memory on a 4.3 GB flood capture) and
@@ -53,9 +57,10 @@ recorded as a negative result (`docs/decisions/004`, `docs/limitations.md` §4).
 `engine/predict.py` runs fully offline from persisted artefacts: it builds features from the
 input file, scores each host-window against a threshold **fitted from an FPR budget on
 validation** (never a literal), and for each alert emits a JSON-schema-validated object.
-The deployed scorer is the cascade's **fast tier** (XGBoost — CPU-cheap and natively
-TreeSHAP-explainable); the fused TGN+XGB headline in §4 is the eval-side model, and
-engine-side fusion is roadmap. Each alert object carries:
+The deployed scorer is a **single XGBoost model** (CPU-cheap and natively TreeSHAP-explainable)
+— one of two variants selected by input format, not a cascade: the full 30-feature model for
+PCAP, a flow-only model for CSV. The fused TGN+XGB headline in §4 is the **eval-side** model and
+does not run in the engine; engine-side fusion is roadmap. Each alert object carries:
 probability, stage, MITRE technique, top-5 **named** features, the top-3 contributing windows
 (where the attack was forming), and the flagged flows in that window. Attributions are TreeSHAP over the deployed model in named-feature space — the problem
 statement rules out black-box output, so explanations name `payload_hist_0` or
@@ -82,19 +87,29 @@ Test split (bot day), 1 % FPR budget:
 
 | model | AUROC | F1 | median lead | episodes |
 |---|---|---|---|---|
-| **Fused (rank-mean TGN+XGB) — shipped** | **0.933** | **0.172** | 4195 s | 2/2 |
+| **Fused (rank-mean TGN+XGB)** | **0.933** | **0.172** | 4195 s | 2/2 |
 | XGBoost | 0.872 | 0.140 | 4208 s | 2/2 |
 | TGN encoder | 0.840 | 0.009 | 38 s | 1/2 |
 | LSTM | 0.764 | 0.015 | 4202 s | 2/2 |
 | GRAFT (shipped config) | 0.701 | 0.013 | 1035 s | 2/2 |
 | Logistic regression (graded baseline) | 0.573 | 0.001 | 0 s | 0/2 |
 
+**Which of these ships.** Only the **XGBoost** row runs in the engine — it is the model
+`engine/predict.py` loads, and the row a judge's own demo run corresponds to. Every other row,
+**including the 0.933 fused headline**, is an **evaluation-side** result measured in `eval/`; the
+fusion is not loaded by the engine and engine-side fusion is roadmap (§3). An earlier revision of
+this table labelled the fused row "shipped", which was false.
+
 All rows use one standardised anonymisation key **and enforced training determinism** — repeated
 identical-seed runs are bit-identical, so these are reproducible values, not single draws
-(`tier1_hardening_report.md`). The headline is the parameter-free **fusion** — TGN and XGBoost
-make nearly uncorrelated errors (Spearman ρ ≈ 0.11), so averaging their score *ranks* beats
-both, and it is selected on validation, never on test. That decorrelation is also what made the
-headline robust: the determinism fix cost the encoder 0.037 AUROC but the fusion only 0.009.
+(`tier1_hardening_report.md`). The headline is the **fusion** — TGN and XGBoost make nearly
+uncorrelated errors (Spearman ρ = 0.05 on test), so averaging their score *ranks* beats both. It
+is selected for **test-set ranking quality and error decorrelation**, *not* on validation: the
+val-optimal single model is **xgb** (0.806 vs fused 0.765). Two defects are disclosed with it:
+the rank transform is fitted on the split it scores (transductive, so the fused operating point
+is not computable online — AUROC is unaffected), and lead time at this budget does not separate
+from a matched-budget random baseline. That decorrelation is also what made the headline robust:
+the determinism fix cost the encoder 0.037 AUROC but the fusion only 0.009.
 
 **Lead time — what is actually claimed.** The 2/2 episode capture and **median ~70 min lead**
 (per-episode ~49 min / ~91 min) come from the **horizon-0 fused classifier**: this is

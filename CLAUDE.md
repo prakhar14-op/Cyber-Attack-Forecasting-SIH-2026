@@ -133,3 +133,5 @@ scripts/     verify_weights.py, make_ablation_table.py
 - `lateral_movement` and `exfiltration` have **no training data** in the public dataset. They
   come only from our own lab capture. Never report per-class metrics for them without saying so.
 - The dataset has known label errors (Liu et al. 2022). Do not chase the last 0.5% of F1.
+  Full treatment — which published defects reach this pipeline, and the labelling risk that is
+  ours alone rather than the literature's — is in `docs/dataset_quality.md`.

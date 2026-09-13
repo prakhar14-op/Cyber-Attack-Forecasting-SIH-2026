@@ -6,8 +6,9 @@ at a fixed false-positive budget. F1 is reported but a model with better F1 and
 zero lead time has failed the problem statement.
 
 Operating points are chosen from an FPR budget on benign host-windows, never a
-hardcoded threshold. Undetected attack episodes contribute lead time 0 — they are
-never dropped from the median.
+hardcoded threshold. Undetected attack episodes are never dropped from the
+median; they contribute `metrics.lead_time_undetected_seconds` from
+configs/eval.yaml (0 in the shipped configuration).
 
 Everything here is a pure function of arrays/records so each metric has a unit
 test with a hand-computed value.
@@ -18,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from configs import load_config
 
 
 def threshold_at_fpr(y_true: np.ndarray, y_score: np.ndarray, fpr_budget: float) -> float:
@@ -156,7 +159,8 @@ class LeadTimeResult:
 
 
 def lead_time(
-    episodes: list[dict], alerts: list[dict], grace_seconds: float = 0.0
+    episodes: list[dict], alerts: list[dict], grace_seconds: float = 0.0,
+    undetected_seconds: float | None = None,
 ) -> LeadTimeResult:
     """Median lead time (with IQR) over attack episodes.
 
@@ -164,9 +168,18 @@ def lead_time(
     host, `end` the annotated completion. Each alert: {host, time} (window_start
     of a fired host-window). Lead time for an episode = end - (time of the first
     alert on that host with start-grace <= time <= end). An episode with no such
-    alert contributes 0 (undetected, never dropped). Positive lead time = the
-    attack was flagged before completion.
+    alert contributes `undetected_seconds` (undetected, never dropped). Positive
+    lead time = the attack was flagged before completion.
+
+    `undetected_seconds` defaults to configs/eval.yaml
+    metrics.lead_time_undetected_seconds; dropping undetected episodes instead is
+    not an option this function offers.
     """
+    if undetected_seconds is None:
+        undetected_seconds = float(
+            load_config("eval")["metrics"]["lead_time_undetected_seconds"]
+        )
+
     by_host: dict[str, list[float]] = {}
     for a in alerts:
         by_host.setdefault(str(a["host"]), []).append(float(a["time"]))
@@ -181,7 +194,7 @@ def lead_time(
         hi = float(ep["end"])
         first = next((t for t in by_host.get(host, []) if lo <= t <= hi), None)
         if first is None:
-            leads.append(0.0)
+            leads.append(float(undetected_seconds))
         else:
             leads.append(max(hi - first, 0.0))
             detected += 1

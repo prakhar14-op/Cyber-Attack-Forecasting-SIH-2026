@@ -11,8 +11,25 @@ order.
 
 Found by a 6-dimension adversarial audit of the eval pipeline (34 raw findings, 15 surviving
 independent refutation), then **re-verified by hand** here. These are not subagent assertions;
-every number below was reproduced directly from the cached score dumps. **Do not record a video
-or submit a deck against the current README numbers until these are resolved.**
+every number below was reproduced directly from the cached score dumps.
+
+> **RESOLUTION STATUS — 12 September 2026.** The blanket "do not film" order this section
+> originally carried has been narrowed to what is actually still open. Four of the six defects
+> are closed in the repository; two need a regeneration run on a machine that has the dataset.
+>
+> | # | Defect | Status | Where |
+> |---|---|---|---|
+> | 1 | "best validation AUROC — selected on val, never on test" is FALSE | **closed** | `909d722` — deleted from README, `docs/architecture.md` and the PDF; `tests/test_docs_claims.py` fails the build if it returns |
+> | 2 | Lead time does not beat chance | **disclosed, row still to generate** | `909d722` — the matched-budget random baseline is stated beside every lead-time claim in README, the slides, the deck and `JUDGES.md`. The permanent ablation ROW needs `results/*.json`, so it waits on the dataset |
+> | 3 | The fusion is transductive | **disclosed, code fix open** | `909d722` — `eval/fused.py`'s docstring now carries a KNOWN DEFECT block with the causal-refit consequence (F1 0.172 → 0.053). The refit itself changes published numbers, so it must land together with a regeneration run |
+> | 4 | The 1 % FPR table is not like-for-like | **closed** | `bdb89f2` — `eval/ablation.py` prints achieved FPR per row; the 3.2× spread is quoted under the README table until the table is regenerated |
+> | 5 | The k-step target is nearly the nowcast target | **closed** | `579ab05` — the 93–96 % overlap is stated wherever the k-step result appears, including the engine's own caveat constant and the app panel |
+> | 6 | Published Spearman ρ does not reproduce | **closed** | `909d722` — corrected to 0.05 in `docs/architecture.md` and `eval/fused.py` |
+>
+> **What this means for filming.** Defects 1, 4, 5 and 6 were textual and are fixed, so the
+> documents are safe to film against. Defects 2 and 3 are *disclosed rather than repaired*: the
+> lead-time and fused-F1 numbers on screen are the ones this report criticises, and every surface
+> that shows them now says so. Film against them only while that disclosure is on screen too.
 
 | # | Defect | Verified evidence | Severity |
 |---|---|---|---|
@@ -52,7 +69,9 @@ time. Combined with the 0/2 operating point, "k-step forecasting" is not current
 substantiated capability at all — not even the ranking claim carries the weight we gave it,
 because the ranking target is nearly the nowcast target.
 
-### Recommended resolution (not applied — these change the headline you are filming)
+### Recommended resolution
+
+*(Status of each is in the table above. 1, 4, 5 and 6 are applied; 2 and 3 need a regeneration run on a dataset machine.)*
 
 1. Delete the "best validation AUROC" sentence everywhere; replace with the honest statement:
    fused is selected for **test-set ranking quality and error decorrelation**, and xgb is the

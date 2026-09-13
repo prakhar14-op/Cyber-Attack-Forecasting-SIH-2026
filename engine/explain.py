@@ -11,9 +11,31 @@ from __future__ import annotations
 import numpy as np
 import yaml
 
-from configs import resolve_path
+from configs import load_config, resolve_path
+
+# A technique rule whose threshold is `stage_rule:<key>` reads that key from
+# configs/data.yaml `stage_rules` instead of repeating its value. The stage
+# decision and the technique that explains it are then driven by ONE number:
+# recalibrating a stage threshold can no longer leave the two contradicting each
+# other in front of an operator.
+STAGE_RULE_REF = "stage_rule:"
+
+# A technique-rule `when` key is `<feature>_<comparison>`, and the comparison has
+# to be one this module actually applies. Only `_gt` is implemented, because that
+# is the only comparison engine/technique_map.yaml uses; an unrecognised suffix
+# raises rather than being skipped. It used to be skipped, and a skipped
+# condition is not a weaker rule — it is NO rule: `sequential_port_ratio_gte`
+# (one typo) made every window match that technique unconditionally, which is
+# exactly the silent failure the MITRE mapping must not have.
+#
+# To add a comparison, put it here AND decide what it means for a feature the
+# caller did not supply: `_gt` fails closed on the 0.0 default below (an absent
+# feature cannot exceed a positive threshold), while a `_lt` would fail OPEN on
+# it, so it needs a missing-feature policy of its own before it ships.
+COMPARISONS = {"gt": lambda value, threshold: value > threshold}
 
 _TECHNIQUE_MAP = None
+_STAGE_RULES = None
 
 
 def _load_technique_map():
@@ -22,6 +44,29 @@ def _load_technique_map():
         path = resolve_path("engine/technique_map.yaml")
         _TECHNIQUE_MAP = yaml.safe_load(path.read_text(encoding="utf-8"))
     return _TECHNIQUE_MAP
+
+
+def _stage_rules() -> dict:
+    global _STAGE_RULES
+    if _STAGE_RULES is None:
+        _STAGE_RULES = load_config("data")["stage_rules"]
+    return _STAGE_RULES
+
+
+def _threshold(key: str, thr):
+    """Resolve a technique-rule threshold, following a STAGE_RULE_REF to the
+    configs/data.yaml value that owns it. A reference to a key that is not there
+    raises — a silently unmatched rule would hide the drift it exists to catch."""
+    if not (isinstance(thr, str) and thr.startswith(STAGE_RULE_REF)):
+        return thr
+    name = thr[len(STAGE_RULE_REF):]
+    rules = _stage_rules()
+    if name not in rules:
+        raise KeyError(
+            f"engine/technique_map.yaml rule {key!r} references stage_rule {name!r}, "
+            f"which is not in configs/data.yaml stage_rules (known: {sorted(rules)})"
+        )
+    return rules[name]
 
 
 class ShapExplainer:
@@ -50,19 +95,58 @@ class ShapExplainer:
         return out
 
 
+def parse_when_key(key: str) -> tuple[str, object]:
+    """`when` key -> (feature name, comparison). Raises on anything else.
+
+    A key whose suffix names no comparison in COMPARISONS is a typo, and a typo
+    must not quietly become "no condition" — see COMPARISONS.
+    """
+    name, _, suffix = key.rpartition("_")
+    op = COMPARISONS.get(suffix)
+    if not name or op is None:
+        raise ValueError(
+            f"engine/technique_map.yaml rule key {key!r} names no supported "
+            f"comparison: expected <feature>_<{'|'.join(sorted(COMPARISONS))}>. "
+            "An unrecognised suffix is a typo, and skipping it would make the "
+            "rule match every window."
+        )
+    return name, op
+
+
 def _rule_matches(when: dict, feats: dict) -> bool:
+    """True when EVERY condition in `when` holds for these window features.
+
+    A feature the caller did not supply reads as 0.0 (callers outside
+    predict_file pass partial dicts); with `_gt` that fails closed.
+    An empty `when` raises: a rule with no conditions matches everything, which
+    is the stage `default`, not a rule.
+    """
+    if not when:
+        raise ValueError(
+            "engine/technique_map.yaml has a technique rule with no `when` "
+            "conditions — that matches every window; use the stage `default`."
+        )
     for key, thr in when.items():
-        if key.endswith("_gt"):
-            name = key[:-3]
-            if not (feats.get(name, 0.0) > thr):
-                return False
+        name, op = parse_when_key(key)
+        if not op(feats.get(name, 0.0), _threshold(key, thr)):
+            return False
     return True
 
 
 def map_technique(stage: str, feats: dict) -> dict:
-    """Stage + observed named-feature pattern -> {technique, name} (M8.5)."""
+    """Stage + observed named-feature pattern -> {technique, name} (M8.5).
+
+    An unmapped stage raises: a stage the map has never heard of is a drift bug,
+    and returning a blank technique for it would hide that behind a plausible
+    output. `unclassified` IS mapped — to no technique, deliberately.
+    """
     tmap = _load_technique_map()
-    entry = tmap.get(stage, {})
+    if stage not in tmap:
+        raise KeyError(
+            f"stage {stage!r} has no entry in engine/technique_map.yaml "
+            f"(known: {sorted(tmap)})"
+        )
+    entry = tmap[stage]
     for rule in entry.get("rules", []) or []:
         if _rule_matches(rule.get("when", {}), feats):
             return {"technique": rule["technique"], "name": rule.get("name", "")}

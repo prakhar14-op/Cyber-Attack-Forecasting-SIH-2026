@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 620" width="1180" height="620"
+     font-family="'Segoe UI', Arial, Helvetica, sans-serif"
+     role="img" aria-labelledby="fig2-title fig2-desc">
+  <title id="fig2-title">Model stack and the honest status of each component</title>
+  <desc id="fig2-desc">Three columns. The deployed engine ships an XGBoost scorer, TreeSHAP
+    attributions, interpretable stage rules and a tamper-evident ledger. The evaluation side
+    holds the TGN encoder, the GRAFT causal transformer, the uncertainty and OOD heads, the
+    k-step forecast head (a ranking result whose target is 93–96 % identical to the nowcast
+    target), the rank-mean fusion that produces the published headline - which does not run in
+    the engine - and the reference baselines. The RSSM world model is a negative result: it failed the M7.7 hard
+    gate and does not ship.</desc>
+
+  <!-- Status is carried by column, outline style and words — never by hue alone, so the
+       figure keeps its meaning in greyscale and on a washed-out projector. -->
+  <rect width="1180" height="620" fill="#ffffff"/>
+
+  <text x="20" y="26" font-size="19" font-weight="700" fill="#0b2438">Figure 2 — Model stack: what each component is, and what it is honestly worth</text>
+
+  <!-- column 1: deployed -->
+  <g data-status="deployed">
+    <rect x="20" y="46" width="368" height="28" rx="4" fill="#0f3a5f"/>
+    <text x="204" y="65" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">SHIPS IN THE DEPLOYED ENGINE</text>
+
+    <rect x="20" y="86" width="368" height="72" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="34" y="106" font-size="13.5" font-weight="600" fill="#0b2438">XGBoost scorer on the 30 named features</text>
+    <text x="34" y="122" font-size="10.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">engine/train_engine.py → engine/predict.py</text>
+    <text x="34" y="136" data-claim="deployed-single-model" font-size="10.5" fill="#2c4557">A single XGBoost model; two variants by input format (PCAP / CSV).</text>
+    <text x="34" y="150" data-auroc-model="XGBoost" font-size="10.5" fill="#2c4557">§4's XGBoost row, test AUROC 0.872, is the harness fit of it.</text>
+
+    <rect x="20" y="166" width="368" height="72" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="34" y="186" font-size="13.5" font-weight="600" fill="#0b2438">TreeSHAP attributions</text>
+    <text x="34" y="202" font-size="10.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">engine/explain.py</text>
+    <text x="34" y="216" font-size="10.5" fill="#2c4557">Exact, in named-feature space: distinct_dst_ips, payload_hist_0.</text>
+    <text x="34" y="230" font-size="10.5" fill="#2c4557">Never an embedding index — the PS rules out black-box output.</text>
+
+    <rect x="20" y="246" width="368" height="72" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="34" y="266" font-size="13.5" font-weight="600" fill="#0b2438">Stage rules → ATT&amp;CK technique</text>
+    <text x="34" y="282" font-size="10.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">configs/data.yaml stage_rules · engine/technique_map.yaml</text>
+    <text x="34" y="296" font-size="10.5" fill="#2c4557">Interpretable thresholds, not a trained 7-class head.</text>
+    <text x="34" y="310" font-size="10.5" fill="#2c4557">Uncalibrated: stage accuracy is TBD, and says so.</text>
+
+    <rect x="20" y="326" width="368" height="72" rx="5" fill="#a9cbe8" stroke="#0f3a5f" stroke-width="2"/>
+    <text x="34" y="346" font-size="13.5" font-weight="600" fill="#0b2438">Tamper-evident ledger</text>
+    <text x="34" y="362" font-size="10.5" fill="#2c4557" font-family="Consolas, 'Courier New', monospace">ledger/ledger.py · ledger/merkle.py · ledger/verify_cli.py</text>
+    <text x="34" y="376" font-size="10.5" fill="#2c4557">Hash chain + per-batch Merkle root + anchored checkpoint.</text>
+    <text x="34" y="390" font-size="10.5" fill="#2c4557">Refuses to write if the weight digest does not match.</text>
+  </g>
+
+  <!-- column 2: evaluation-side only -->
+  <g data-status="eval-only">
+    <rect x="406" y="46" width="368" height="28" rx="4" fill="#ffffff" stroke="#333333" stroke-width="1.8"/>
+    <text x="590" y="65" text-anchor="middle" font-size="13" font-weight="700" fill="#333333">EVALUATION-SIDE ONLY — MEASURED, NOT DEPLOYED</text>
+
+    <rect x="406" y="86" width="368" height="72" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="106" font-size="13.5" font-weight="600" fill="#1a1a1a">TGN temporal-graph encoder</text>
+    <text x="420" y="122" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">models/tgn.py</text>
+    <text x="420" y="136" font-size="10.5" fill="#444444">Memory over the anonymised host graph; edges stamped at flow end.</text>
+    <text x="420" y="150" data-auroc-model="TGN encoder" font-size="10.5" fill="#444444">Test AUROC 0.840.</text>
+
+    <rect x="406" y="166" width="368" height="72" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="186" font-size="13.5" font-weight="600" fill="#1a1a1a">GRAFT causal transformer</text>
+    <text x="420" y="202" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">models/graft.py</text>
+    <text x="420" y="216" font-size="10.5" fill="#444444">Causal + padding mask, pinned bit-identically against future leakage.</text>
+    <text x="420" y="230" data-auroc-model="GRAFT (shipped config)" font-size="10.5" fill="#444444">Test AUROC 0.701 in the shipped config — below XGBoost.</text>
+
+    <rect x="406" y="246" width="368" height="72" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="266" font-size="13.5" font-weight="600" fill="#1a1a1a">Evidential + OOD heads</text>
+    <text x="420" y="282" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">models/losses.py (heads defined in models/graft.py)</text>
+    <text x="420" y="296" font-size="10.5" fill="#444444">Dirichlet uncertainty K/S and a benign-only reconstruction signal.</text>
+    <text x="420" y="310" font-size="10.5" fill="#444444">The engine does not read either — no alert depends on them.</text>
+
+    <rect x="406" y="326" width="368" height="86" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="346" font-size="13.5" font-weight="600" fill="#1a1a1a">k-step forecast head</text>
+    <text x="420" y="362" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">eval/forecast.py</text>
+    <g data-claim="kstep-ranking-only">
+      <text x="420" y="376" font-size="10.5" fill="#444444">Labels shifted by k: a verified RANKING result at k = 4 and k = 8.</text>
+      <text x="420" y="390" font-size="10.5" fill="#444444">Caveat: that target is 93–96 % identical to the NOWCAST target.</text>
+    </g>
+    <text x="420" y="404" data-claim="kstep-no-operating-point" font-size="10.5" fill="#444444">Fires 0/2 episodes at the 1 % FPR budget — no forward operating point.</text>
+
+    <rect x="406" y="420" width="368" height="72" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="440" font-size="13.5" font-weight="600" fill="#1a1a1a">Rank-mean fusion (TGN + XGBoost)</text>
+    <text x="420" y="456" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">eval/fused.py</text>
+    <text x="420" y="470" data-auroc-model="Fused (rank-mean TGN+XGB)" data-claim="fusion-not-deployed" font-size="10.5" fill="#444444">Test AUROC 0.933 — published headline; does not run in the engine.</text>
+    <text x="420" y="484" font-size="10.5" fill="#444444">Rank transform is transductive: this operating point is not online.</text>
+
+    <rect x="406" y="500" width="368" height="72" rx="5" fill="#ffffff" stroke="#333333" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="420" y="520" font-size="13.5" font-weight="600" fill="#1a1a1a">Reference baselines</text>
+    <text x="420" y="536" font-size="10.5" fill="#444444" font-family="Consolas, 'Courier New', monospace">models/baselines.py</text>
+    <text x="420" y="550" data-auroc-model="LSTM" font-size="10.5" fill="#444444">LSTM test AUROC 0.764.</text>
+    <text x="420" y="564" data-auroc-model="Logistic regression (graded baseline)" font-size="10.5" fill="#444444">Logistic regression (the graded baseline) test AUROC 0.573.</text>
+  </g>
+
+  <!-- column 3: negative result -->
+  <g data-status="not-shipped">
+    <rect x="792" y="46" width="368" height="28" rx="4" fill="#8c8c8c"/>
+    <text x="976" y="65" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">NEGATIVE RESULT — DOES NOT SHIP</text>
+
+    <rect x="792" y="86" width="368" height="232" rx="5" fill="#e4e4e4" stroke="#8c8c8c" stroke-width="1.8" stroke-dasharray="5 3"/>
+    <text x="806" y="106" font-size="13.5" font-weight="600" fill="#4a4a4a">RSSM world model</text>
+    <text x="806" y="122" font-size="10.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">models/rssm.py · configs/train_rssm_v2.yaml</text>
+    <text x="806" y="140" font-size="11" font-weight="600" fill="#4a4a4a">Failed the M7.7 hard gate. Twice.</text>
+    <text x="806" y="158" font-size="10.5" fill="#555555">· Posterior collapses; the ensemble band does not widen with horizon.</text>
+    <text x="806" y="174" font-size="10.5" fill="#555555">· 0/2 episodes and 0 s lead at every horizon, v1 and v2 alike.</text>
+    <text x="806" y="190" font-size="10.5" fill="#555555">· Worse than every baseline — and worse than its own input</text>
+    <text x="818" y="204" font-size="10.5" fill="#555555">embeddings, so it destroys signal rather than adding forecasting.</text>
+    <text x="806" y="222" font-size="10.5" fill="#555555">The anti-collapse recipe that recovered most of the ranking gap</text>
+    <text x="806" y="236" font-size="10.5" fill="#555555">(KL warm-up, free bits, reweighted dynamics) is recorded in</text>
+    <text x="806" y="250" font-size="10.5" fill="#555555" font-family="Consolas, 'Courier New', monospace">docs/decisions/004-m7-hard-gate.md</text>
+    <text x="806" y="264" font-size="10.5" fill="#555555">as the honest starting point for a GPU run — not as a component.</text>
+    <text x="806" y="286" font-size="11" font-weight="600" fill="#4a4a4a">Never tagged, never shipped, never in the pitch.</text>
+    <text x="806" y="304" font-size="10.5" fill="#555555">Its RANKING signal lives in the encoder instead (Figure 1, lane B).</text>
+  </g>
+
+  <g font-size="11.5" fill="#333333">
+    <text x="20" y="588">Every AUROC above is the test-split row of the model-comparison table in docs/architecture.md §4 (day-wise splits, 1 % FPR budget, enforced training determinism).</text>
+    <text x="20" y="606">tests/test_figures.py binds each AUROC to the model it describes, each disclosure above to docs/limitations.md, and fails if a figure names a module that does not exist.</text>
+  </g>
+</svg>

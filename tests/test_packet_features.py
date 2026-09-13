@@ -11,7 +11,7 @@ import random
 import pandas as pd
 
 import pytest
-from scapy.all import IP, TCP, Ether, wrpcap
+from scapy.all import ARP, IP, IPv6, TCP, Dot1Q, Ether, wrpcap
 
 from data import packet_features as pf
 
@@ -26,6 +26,16 @@ def _pkt(ts, sport, dport, flags="S", seq=0, payload=b"", src=SRC, dst=DST, **ip
         / IP(src=src, dst=dst, ttl=64, **ip_kwargs)
         / TCP(sport=sport, dport=dport, flags=flags, seq=seq, window=8192)
         / payload
+    )
+    pkt.time = ts
+    return pkt
+
+
+def _v6_pkt(ts, sport, dport, src="2001:db8::5", dst="2001:db8::9"):
+    pkt = (
+        Ether(src="aa:aa:aa:aa:aa:aa", dst="bb:bb:bb:bb:bb:bb")
+        / IPv6(src=src, dst=dst, hlim=64)
+        / TCP(sport=sport, dport=dport, flags="S", window=8192)
     )
     pkt.time = ts
     return pkt
@@ -305,6 +315,121 @@ def test_m24_join_has_no_silent_row_loss(tmp_path, data_cfg):
     assert joined == len(flows), (
         f"{len(flows) - joined} of {len(flows)} flows lost their packet-side window in the join"
     )
+
+
+def test_ipv6_scan_is_counted_not_silently_dropped(tmp_path, data_cfg):
+    """The parser is IPv4-only, so an IPv6 scan produces ZERO feature rows. The
+    frames must still be COUNTED: an uncounted drop means the tool reports "no
+    threat" for traffic it never saw — the worst failure mode a security tool
+    has. Full IPv6 feature support is not implemented — docs/limitations.md §5,
+    whose text test_the_ipv6_limitation_citation_points_at_text_that_exists
+    pins so this reference cannot rot into a claim the doc does not make."""
+    scan = [_v6_pkt(BASE_TS + i * 0.05, 40000, 2000 + i) for i in range(200)]
+    table = _extract(tmp_path, scan, data_cfg)
+
+    assert len(table) == 0, "IPv4-only parser must not invent IPv6 rows"
+    drops = pf.dropped_frames(table)
+    assert drops["ipv6"] == 200, f"every IPv6 frame must be counted: {drops}"
+    assert sum(drops.values()) == 200
+
+
+def test_every_frame_is_either_a_row_or_a_counted_drop(tmp_path, data_cfg):
+    """The accounting identity: rows + drops = frames read. No third outcome."""
+    ipv4 = [_pkt(BASE_TS + i * 0.05, 40000, 80 + i) for i in range(5)]
+    ipv6 = [_v6_pkt(BASE_TS + 1 + i * 0.05, 40000, 443) for i in range(3)]
+    arp = Ether(src="aa:aa:aa:aa:aa:aa", dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=DST)
+    arp.time = BASE_TS + 2
+    runt = Ether(src="aa:aa:aa:aa:aa:aa", dst="bb:bb:bb:bb:bb:bb") / (b"\x00" * 4)
+    runt.time = BASE_TS + 3
+
+    table = _extract(tmp_path, ipv4 + ipv6 + [arp, runt], data_cfg)
+    drops = pf.dropped_frames(table)
+
+    assert len(table) == 5
+    assert drops == {"short_frame": 1, "ipv6": 3, "non_ipv4_ethertype": 1,
+                     "truncated_ip_header": 0}
+    assert len(table) + sum(drops.values()) == 10, "a frame must never just vanish"
+
+
+def test_the_ipv6_limitation_citation_points_at_text_that_exists():
+    """A citation to a document that does not make the claim is the drift this
+    suite exists to catch: the IPv6 gap was cited to docs/limitations.md while
+    that file said nothing about IPv6. This pins the reference to real text."""
+    from configs import resolve_path
+
+    doc = resolve_path("docs/limitations.md").read_text(encoding="utf-8")
+    heading = next((line for line in doc.splitlines()
+                    if line.startswith("## ") and "IPv6" in line), None)
+    assert heading and heading.startswith("## 5."), (
+        "docs/limitations.md §5 must be the IPv6/ethertype section the extractor "
+        f"and its tests cite; found {heading!r}"
+    )
+    for claim in ("IPv6", "DROP_REASONS", "unparsed_frames"):
+        assert claim in doc, f"docs/limitations.md no longer states {claim!r}"
+
+
+def test_a_lost_drop_history_reads_as_unknown_not_as_zero_drops(tmp_path, data_cfg):
+    """The counter's own failure mode: the counts ride on `.attrs`, which pandas
+    keeps only while every input carries the same ones. A table that lost them
+    must answer None — "I do not know" — because an empty dict would be read
+    downstream as "every frame was parsed", the silent success this feature
+    exists to prevent."""
+    table = _extract(tmp_path, [_pkt(BASE_TS, 40000, 80), _v6_pkt(BASE_TS + 0.1, 40000, 443)],
+                     data_cfg)
+    assert pf.dropped_frames(table) == {"short_frame": 0, "ipv6": 1,
+                                        "non_ipv4_ethertype": 0, "truncated_ip_header": 0}
+
+    plain = pd.DataFrame({"ts": table["ts"], "extra": 1})  # no drop history of its own
+    for lost in (table.merge(plain, on="ts"),
+                 pd.concat([table, plain], ignore_index=True),
+                 table.groupby("src_ip", as_index=False).size(),
+                 pd.DataFrame({c: table[c] for c in table.columns})):
+        assert pf.dropped_frames(lost) is None, (
+            "a table with no drop history must not claim zero drops"
+        )
+
+
+def test_vlan_tagged_ipv4_still_parses_while_tagged_ipv6_is_counted(tmp_path, data_cfg):
+    """The VLAN unwrap must not turn a counted drop into a silent one."""
+
+    def tagged(ts, l3):
+        pkt = (Ether(src="aa:aa:aa:aa:aa:aa", dst="bb:bb:bb:bb:bb:bb")
+               / Dot1Q(vlan=10) / l3 / TCP(sport=40000, dport=80, flags="S"))
+        pkt.time = ts
+        return pkt
+
+    table = _extract(
+        tmp_path,
+        [tagged(BASE_TS, IP(src=SRC, dst=DST, ttl=64)),
+         tagged(BASE_TS + 0.1, IPv6(src="2001:db8::5", dst="2001:db8::9"))],
+        data_cfg,
+    )
+    assert len(table) == 1 and table.iloc[0]["dst_port"] == 80
+    assert pf.dropped_frames(table)["ipv6"] == 1
+
+
+@pytest.mark.skipif(
+    not __import__("configs").resolve_path("app/assets/synthetic_demo.pcap").exists(),
+    reason="synthetic demo pcap not built — run python -m capture.make_synthetic_demo",
+)
+def test_extraction_is_deterministic_on_the_bundled_capture(data_cfg):
+    """Enforced determinism is a headline claim, so it needs a test. This is the
+    artifact-free half: parsing and feature assembly on the committed demo
+    capture must be bit-identical across runs (no set/dict ordering, no
+    unseeded RNG). The model half needs trained weights and is covered by the
+    artifact-gated engine tests."""
+    from configs import resolve_path
+
+    pcap = resolve_path("app/assets/synthetic_demo.pcap")
+    first, second = (pf.extract_packet_table(pcap, data_cfg) for _ in range(2))
+    pd.testing.assert_frame_equal(first, second, check_exact=True)
+    assert pf.dropped_frames(first) == pf.dropped_frames(second)
+
+    for fn in (pf.packet_window_features, pf.sent_window_features):
+        pd.testing.assert_frame_equal(fn(first, data_cfg), fn(second, data_cfg),
+                                      check_exact=True)
+    pd.testing.assert_frame_equal(pf.assemble_flows(first, data_cfg),
+                                  pf.assemble_flows(second, data_cfg), check_exact=True)
 
 
 def test_sent_window_features_equal_reference(data_cfg):
