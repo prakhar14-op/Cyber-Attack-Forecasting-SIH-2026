@@ -69,6 +69,8 @@ verify and why.
 - [docs/decisions/](docs/decisions/) — the decision log, including the world model that failed
 - [tier1_hardening_report.md](tier1_hardening_report.md) — our own adversarial audit of these
   results, including the defects it found in claims we had already published
+- [docs/WORK_LOG.md](docs/WORK_LOG.md) — what the September audit changed and why, including
+  the defects the fixing itself introduced and what is still open
 
 If you are evaluating this system rather than building on it, these five answer the questions a
 reviewer usually has to dig for:
