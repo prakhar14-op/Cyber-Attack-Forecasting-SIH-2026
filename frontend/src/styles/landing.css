@@ -424,6 +424,63 @@
   height: 100%;
 }
 
+.lp-network-mount {
+  position: absolute;
+  inset: 0;
+}
+
+.lp-node-tooltip {
+  position: absolute;
+  z-index: 11;
+  display: grid;
+  gap: 3px;
+  min-width: 132px;
+  padding: 8px 10px;
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  border-radius: 8px;
+  background: rgba(6, 16, 30, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(56, 189, 248, 0.07);
+  color: var(--text-secondary, #cbd5e1);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  transform: translate(-50%, calc(-100% - 14px));
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+}
+
+.lp-node-tooltip.is-pinned {
+  border-color: rgba(125, 211, 252, 0.62);
+}
+
+.lp-node-tooltip-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-bright, #7dd3fc);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.lp-node-tooltip-title i.is-threat {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #fb7185;
+  box-shadow: 0 0 6px rgba(251, 113, 133, 0.85);
+}
+
+.lp-node-tooltip-row {
+  color: rgba(203, 213, 225, 0.82);
+}
+
+.lp-node-tooltip small {
+  color: var(--text-muted, #64748b);
+  font-size: 7px;
+  letter-spacing: 0.09em;
+}
+
 .lp-network-canvas[data-webgl="unavailable"] {
   background:
     radial-gradient(circle at 30% 45%, rgba(125, 211, 252, 0.25) 0 2px, transparent 3px),
