@@ -218,7 +218,7 @@ demo is enough, and is honest.
 
 ---
 
-## M11 — Own capture (lab evidence for the two missing stages)
+## M11 — Own capture (lab evidence for the three stages with no labelled windows)
 
 | # | Task | Done when |
 |---|---|---|

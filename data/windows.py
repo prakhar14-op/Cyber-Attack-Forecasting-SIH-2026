@@ -28,7 +28,39 @@ from configs import resolve_path
 # Static, IP-derived node features (no behaviour, so no temporal leak).
 # server-like behaviour now lives in the window-bounded sent feature
 # `server_port_ratio`, not here.
-_ROLE_FEATURES = ["internal", "net24_bucket"]
+#
+# The SET is config-driven because one of them is under review. `net24_bucket`
+# is a hashed /24 bucket, so it is attacker-influenceable — an attacker who
+# rents a different VPS re-rolls it — and the project's own ablation
+# (scripts/ablate_net24.py, tier1_hardening_report.md Part 3) measured dropping
+# it as a large gain on the flat models. Which set ships is a measurement, not a
+# preference, so it is decided on the validation split and recorded in config;
+# _ROLE_FEATURES_DEFAULT is what the published numbers were measured under.
+_ROLE_FEATURES_DEFAULT = ["internal", "net24_bucket"]
+
+
+def role_features(cfg: dict) -> list[str]:
+    """The role-feature columns this run uses, in fixed order.
+
+    Reads `anonymisation.role_features` when present; falls back to the set the
+    published table was measured under. An unknown name is an error rather than
+    a silently ignored key — a typo here silently changes the feature matrix,
+    which would make two runs incomparable without either of them saying so.
+    """
+    configured = cfg.get("anonymisation", {}).get("role_features")
+    if configured is None:
+        return list(_ROLE_FEATURES_DEFAULT)
+    unknown = [c for c in configured if c not in _ROLE_FEATURES_DEFAULT]
+    if unknown:
+        raise ValueError(
+            f"configs: anonymisation.role_features names {unknown}, which are not "
+            f"role features. Known: {_ROLE_FEATURES_DEFAULT}"
+        )
+    return [c for c in _ROLE_FEATURES_DEFAULT if c in configured]
+
+
+# Kept as a module-level name because several modules and tests import it.
+_ROLE_FEATURES = _ROLE_FEATURES_DEFAULT
 
 # Columns present on every window row that are NOT model features.
 _META_COLS = ["host", "window_id", "window_start", "day"]
@@ -44,7 +76,7 @@ def feature_columns(cfg: dict) -> list[str]:
     """
     packet = list(cfg["packet_features"]["fields"])
     sent = list(cfg["packet_features"]["sent_fields"])
-    return packet + sent + _ROLE_FEATURES
+    return packet + sent + role_features(cfg)
 
 
 def write_feature_names(cfg: dict):
@@ -59,7 +91,7 @@ def write_feature_names(cfg: dict):
         with open(path, encoding="utf-8") as fh:
             existing = json.load(fh)
     existing["window_features"] = feature_columns(cfg)
-    existing["role_features"] = list(_ROLE_FEATURES)
+    existing["role_features"] = role_features(cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(existing, fh, indent=2)

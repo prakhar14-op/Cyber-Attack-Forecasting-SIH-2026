@@ -1,0 +1,61 @@
+# Continuous integration for SIH26153.
+#
+# Runs the test suite the README documents. The bare checkout has no trained
+# artifacts and no dataset (both gitignored — CLAUDE.md forbids committing
+# weights), so the artifact-gated tests self-skip via
+# tests/_stubs.engine_artifacts_present. Green here therefore means "0 failed,
+# 0 errors, some skipped", NOT "everything exercised". No expected pass/skip
+# count is written down anywhere: the suite grows, and a hardcoded count becomes
+# a published lie the moment it does — which is what happened to the fixed
+# figure this comment used to carry. The robust check is pytest's own exit code,
+# which is what gates this job. tests/test_docs_claims.py
+# [hardcoded-suite-count] fails if a fixed count is written back into this file
+# or into the docs; tests/test_bootstrap_state.py, run as its own step below,
+# prints which guarantees the skips leave unverified.
+#
+# windows-latest / Python 3.12 is the platform the project targets: the offline
+# wheel-house is built win_amd64/cp312 (vendor/README.md) and every pin in
+# requirements.txt resolves there.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Show environment
+        run: |
+          python --version
+          python -c "import torch, numpy, xgboost; print('torch', torch.__version__, '| numpy', numpy.__version__, '| xgboost', xgboost.__version__)"
+
+      # SIH26_HMAC_KEY is deliberately NOT set: the anonymiser must refuse to run
+      # without it (tests/test_anonymize.py asserts that refusal), and no test on
+      # a bare checkout needs a real key.
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Bootstrap-state disclosure
+        if: always()
+        run: python -m pytest tests/test_bootstrap_state.py -q -s

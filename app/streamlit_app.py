@@ -8,7 +8,41 @@ from a CDN at view time. All logic lives in app/panels.py so it is testable
 without a browser.
 
 Panels: upload -> forecast timeline (M10.2) -> explanation (M10.3) -> what-if
-(M10.4) -> ledger verify/tamper/re-verify (M10.5) -> results card (M10.6).
+(M10.4) -> ledger verify/tamper/re-verify (M10.5) -> results card (M10.6) ->
+network graph (M10.8) -> k-step risk curve (PS deliverable 3).
+
+Between the upload and the timeline sits the one thing that is not a panel: the
+provenance block. `engine.predict` can load either the PUBLISHED weights or the
+DEMO lane a fresh clone bootstraps from the bundled synthetic capture, and it
+reports which. When it was the demo lane, that fact is stated here — in one
+coloured box, before the first number on the page, with the checkable detail in a
+fold under it — and the individual surfaces where a demo number would be actively
+misleading are marked again where they sit: the threshold metric's own label,
+both server-side charts (inside the PNG, because a screenshot travels without the
+page), the benchmark card, and the k-step panel. Which surfaces those are, which
+of this page's existing disclosures were merged into that block rather than added
+beside it, and why the box is short, is argued in
+app/panels.py::provenance_block.
+
+Counting the boxes is part of the job, not tidiness: this page carried five
+coloured boxes against fifteen result elements on a real demo run, two of them
+over a benchmark section with nothing in it. It now carries three.
+tests/test_app.py::test_the_demo_page_does_not_become_more_warning_than_result
+keeps it that way without letting any single disclosure be deleted to get there.
+
+The k-step panel is deliberately the one panel that leads with its own
+limitation: the head behind it has a ranking signal and no validated operating
+point at any horizon, and a rising curve read as a prediction would be exactly
+the overclaim this repo has spent three rounds removing. The caveat is rendered
+before the chart and drawn INTO the chart, and its figures are pinned against
+docs/limitations.md from tests/test_app.py.
+
+Every failure-prone call into panels is wrapped and routed through
+panels.failure_card: a raw Streamlit traceback on a projector leaks the
+presenter's filesystem layout and tells a judge nothing about what to run. That
+claim is enforced, not asserted: tests/test_app.py derives the list of calls it
+checks from the panels module itself, so a panel function added tomorrow is
+covered unless it is explicitly listed as needing no guard.
 """
 
 from __future__ import annotations
@@ -23,6 +57,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
 import streamlit as st
 
 from app import panels
@@ -30,6 +65,20 @@ from configs import load_config, resolve_path
 
 st.set_page_config(page_title="Network Attack Forecasting", layout="wide")
 CFG = load_config("data")
+COLORS = panels.theme_colors()
+
+
+def _error_card(exc: BaseException) -> None:
+    """Render a failure as an operator card instead of a traceback."""
+    card = panels.failure_card(exc)
+    st.error(f"**{card['title']}**\n\n{card['detail']}", icon="🚫")
+    if card["command"]:
+        st.caption("Run this, then reload the page:")
+        st.code(card["command"], language="bash")
+    st.caption(
+        "The traceback stays in the terminal running Streamlit — it is deliberately "
+        "not rendered here, because it carries absolute filesystem paths."
+    )
 
 
 def _fmt_threshold(x: float) -> str:
@@ -41,7 +90,10 @@ def _fmt_threshold(x: float) -> str:
 
 def _network_figure(layout: dict):
     """Plotly 3D figure of the host graph (M10.8). Rendered by st.plotly_chart,
-    which serves plotly.js from Streamlit's own assets — no CDN, stays offline."""
+    which serves plotly.js from Streamlit's own assets — no CDN, stays offline.
+
+    The scene background is transparent, so every colour here comes from
+    panels.theme_colors() — the page's own theme — and never assumes one."""
     import plotly.graph_objects as go
 
     nodes, edges = layout["nodes"], layout["edges"]
@@ -63,12 +115,12 @@ def _network_figure(layout: dict):
         xs, ys, zs = _segments(normal)
         traces.append(go.Scatter3d(
             x=xs, y=ys, z=zs, mode="lines", hoverinfo="none",
-            line=dict(color="rgba(150,165,195,0.30)", width=2), name="flows"))
+            line=dict(color=panels.rgba(COLORS["muted"], 0.30), width=2), name="flows"))
     if risky:
         xs, ys, zs = _segments(risky)
         traces.append(go.Scatter3d(
             x=xs, y=ys, z=zs, mode="lines", hoverinfo="none",
-            line=dict(color="rgba(225,45,45,0.85)", width=5),
+            line=dict(color=panels.rgba(COLORS["alert"], 0.85), width=5),
             name="edge from an alerting host"))
 
     max_deg = max((n["degree"] for n in nodes), default=1) or 1
@@ -79,10 +131,12 @@ def _network_figure(layout: dict):
         marker=dict(
             size=sizes, color=[n["peak_prob"] for n in nodes], colorscale="YlOrRd",
             cmin=0.0, cmax=1.0, showscale=True,
-            colorbar=dict(title="attack<br>prob", thickness=12, len=0.6),
-            line=dict(width=0.5, color="#333")),
+            colorbar=dict(
+                title=dict(text="attack<br>prob", font=dict(color=COLORS["text"])),
+                tickfont=dict(color=COLORS["text"]), thickness=12, len=0.6),
+            line=dict(width=0.5, color=panels.rgba(COLORS["text"], 0.35))),
         text=[n["ip"] if n["n_alerts"] > 0 else "" for n in nodes],
-        textposition="top center", textfont=dict(size=9, color="#e0e0e0"),
+        textposition="top center", textfont=dict(size=9, color=COLORS["text"]),
         hovertext=[f"{n['ip']}<br>peak prob {n['peak_prob']:.3g}<br>"
                    f"alerts {n['n_alerts']} · flows {n['degree']}" for n in nodes],
         hoverinfo="text", name="hosts"))
@@ -95,11 +149,94 @@ def _network_figure(layout: dict):
     fig = go.Figure(traces)
     fig.update_layout(
         showlegend=False, height=600, margin=dict(l=0, r=0, t=0, b=0),
-        paper_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)", font=dict(color=COLORS["text"]),
+        hoverlabel=dict(bgcolor=COLORS["panel"], font=dict(color=COLORS["text"])),
         scene=dict(
             xaxis=axis, yaxis=axis, zaxis=axis,
             bgcolor="rgba(0,0,0,0)", aspectmode="cube",
             camera=dict(eye=dict(x=1.0, y=1.0, z=0.85))))
+    return fig
+
+
+def _kstep_figure(curve, host: str, log_scale: bool, demo_mark: str = ""):
+    """The per-host k-step risk curve (PS deliverable 3), rendered server-side.
+
+    Matplotlib like the section-2 timeline, so the page stays offline, and the
+    same theme palette, so it is legible on the light theme a projector defaults
+    to.
+
+    Two constraints shape it. Each horizon's threshold is drawn as its OWN
+    marker rather than one line across the chart, because they are separate
+    operating points and a single line would imply one shared decision rule. And
+    FORECAST_FIGURE_CAVEAT is drawn inside the axes: a screenshot of this chart
+    travels without the warning rendered above it, and a risk curve that arrives
+    somewhere else with no caveat attached is the overclaim in its most portable
+    form.
+
+    `log_scale` and `demo_mark` are decided by panels.kstep_use_log_scale and
+    panels.demo_figure_mark and passed in rather than queried here: every panels
+    call this module makes has to sit inside the section's try (tests/test_app.py
+    walks the AST for that), and a figure builder is not inside one.
+
+    `demo_mark` is drawn with `fig.suptitle`, not into the axes, because the axes
+    title is already carrying FORECAST_FIGURE_CAVEAT and one would overdraw the
+    other. It is still inside the rendered PNG, which is the property that
+    matters: both statements travel with a screenshot of this curve.
+    """
+    fig, ax = plt.subplots(figsize=(11, 3.6), facecolor=COLORS["background"])
+    ax.set_facecolor(COLORS["background"])
+
+    seconds = [float(s) for s in curve["seconds_ahead"]]
+    scores = [float(p) for p in curve["probability"]]
+    ax.plot(seconds, scores, "-o", ms=5, color=COLORS["accent"],
+            label=f"`{host}` k-step ranking score")
+
+    # Thresholds are per-horizon and may be absent for some k; only the ones the
+    # engine actually supplied are drawn.
+    th = [(s, float(t)) for s, t in zip(seconds, curve["threshold"]) if pd.notna(t)]
+    if th:
+        ax.plot([s for s, _ in th], [t for _, t in th], "--s", ms=5,
+                color=COLORS["alert"], label="that horizon's own 1% FPR threshold")
+
+    crossings = [(s, p) for s, p, a in zip(seconds, scores, curve["alert"]) if bool(a)]
+    if crossings:
+        ax.scatter([s for s, _ in crossings], [p for _, p in crossings], s=110,
+                   facecolors="none", edgecolors=COLORS["alert"], linewidths=1.6,
+                   label="crosses that horizon's threshold (not a validated alert)")
+
+    # The stage behind the curve, annotated only where it CHANGES. engine.forecast
+    # derives it from the SOURCE window, so on today's engine it is one label for
+    # the whole curve and exactly one annotation appears — which is the honest
+    # picture. The loop still handles a change so the chart would show one if a
+    # future engine ever produced a per-k stage; it does not imply one exists.
+    previous = None
+    for s, p, stage in zip(seconds, scores, curve["stage"]):
+        if stage and stage != previous:
+            # Offset right, not centred: the first annotated point is usually the
+            # leftmost one, and a centred label there is clipped by the y-axis.
+            ax.annotate(f"source-window stage: {stage}", (s, p),
+                        textcoords="offset points", xytext=(8, 10),
+                        ha="left", fontsize=8, color=COLORS["text"])
+        previous = stage
+
+    if log_scale:
+        ax.set_yscale("log")
+        ax.set_ylabel("k-step ranking score (log)", color=COLORS["text"])
+    else:
+        ax.set_ylabel("k-step ranking score", color=COLORS["text"])
+    ax.set_xlabel("seconds ahead of this host's newest window (k × stride)",
+                  color=COLORS["text"])
+    ax.set_title(panels.FORECAST_FIGURE_CAVEAT, loc="left", fontsize=8,
+                 color=COLORS["alert"])
+    if demo_mark:
+        fig.suptitle(demo_mark, x=0.01, ha="left", fontsize=8, color=COLORS["alert"])
+    ax.tick_params(colors=COLORS["text"])
+    for spine in ax.spines.values():
+        spine.set_color(COLORS["muted"])
+    legend = ax.legend(fontsize=7, ncol=3, facecolor=COLORS["panel"],
+                       edgecolor=COLORS["muted"], labelcolor=COLORS["text"])
+    legend.get_frame().set_alpha(0.9)
+    ax.grid(alpha=0.3, color=COLORS["muted"])
     return fig
 
 
@@ -122,35 +259,52 @@ col_a, col_b = st.columns([2, 1])
 with col_a:
     uploaded = st.file_uploader("Upload a flow CSV or a PCAP", type=["csv", "pcap", "pcapng"])
 with col_b:
-    use_pcap = st.button("Demo: synthetic PCAP (full features)")
-    use_csv = st.button("Demo: sample CSV (flow only)")
+    use_pcap = st.button(panels.DEMO_PCAP_LABEL)
+    use_csv = st.button(panels.DEMO_CSV_LABEL)
 
 _synth = resolve_path("app/assets/synthetic_demo.pcap")
 input_path = None
-if uploaded is not None:
-    input_path = _session_dir() / uploaded.name
-    input_path.write_bytes(uploaded.getbuffer())
-elif use_pcap and _synth.exists():
-    input_path = _synth
-elif use_csv:
-    input_path = resolve_path(CFG["paths"]["fixture_csv"])
+input_error = None
+try:
+    if uploaded is not None:
+        # Size is checked BEFORE the bytes touch disk (M10 / F39), and the name is
+        # sanitised because Streamlit does not sanitise UploadedFile.name.
+        panels.check_upload_size(uploaded.size, uploaded.name)
+        input_path = _session_dir() / panels.safe_upload_name(uploaded.name)
+        input_path.write_bytes(uploaded.getbuffer())
+    elif use_pcap:
+        if not _synth.exists():
+            raise FileNotFoundError(
+                f"{_synth} missing — regenerate it with `python -m capture.make_synthetic_demo`"
+            )
+        input_path = _synth
+    elif use_csv:
+        input_path = resolve_path(CFG["paths"]["fixture_csv"])
+        if not input_path.exists():
+            raise FileNotFoundError(f"flow CSV not found: {input_path}")
+except Exception as exc:  # a bad input must never reach the traceback renderer
+    input_error = exc
+    input_path = None
+
+if input_error is not None:
+    _error_card(input_error)
+    st.stop()
 
 if input_path is not None:
     st.session_state.input_path = str(input_path)
 input_path = st.session_state.get("input_path")
 
 if not input_path:
-    st.info("Upload a file or click **Use the bundled sample** to begin.")
+    st.info(panels.EMPTY_STATE_HINT)
     st.stop()
 
 st.success(f"Input: `{Path(input_path).name}`")
-if "synthetic_demo" in str(input_path):
-    st.info(
-        "This is a **synthetic, illustrative** capture (not real data, never used for any "
-        "reported metric) — it walks the full kill chain so the demo can show lateral movement "
-        "and exfiltration, which no public dataset contains. See app/assets/README.md.",
-        icon="🧪",
-    )
+# The "this capture is synthetic" note used to render here. It now renders inside
+# panels.provenance_block below, together with WHICH MODEL scored the run — the
+# two facts compound, and a judge who has already scrolled past one provenance
+# box does not read the second. It costs one thing and the trade is deliberate:
+# on a run that fails before the engine returns, the page stops at the error card
+# and the input note is not reached. A failed page shows no numbers either.
 if str(input_path).endswith(".csv"):
     st.warning(
         "CSV input carries flow features only — the packet-level features "
@@ -163,127 +317,268 @@ if str(input_path).endswith(".csv"):
 # ---------------------------------------------------------------- run
 # Cache the result per input so interacting with widgets (tamper, what-if,
 # re-verify) does NOT re-run the pipeline and re-append to the ledger.
+_COUNTERFACTUAL_KEYS = ("whatif_result", "whatif_host", "contained_result", "contained_host")
+
 if st.session_state.get("ran_for") != str(input_path):
-    with st.spinner("Running the offline pipeline (features → forecast → explanations → ledger)…"):
-        st.session_state.result = panels.run_pipeline(input_path, _session_dir())
+    for _k in _COUNTERFACTUAL_KEYS:  # a counterfactual belongs to one input only
+        st.session_state.pop(_k, None)
+    try:
+        with st.spinner(
+            "Running the offline pipeline (features → forecast → explanations → ledger)…"
+        ):
+            st.session_state.result = panels.run_pipeline(input_path, _session_dir())
         st.session_state.ran_for = str(input_path)
+    except Exception as exc:
+        st.session_state.pop("result", None)
+        st.session_state.pop("ran_for", None)
+        _error_card(exc)
+        st.stop()
 result = st.session_state.result
+
+# WHAT PRODUCED THE NUMBERS ON THIS PAGE — rendered before the first of them.
+# The metric row below is the first figure a judge sees, so this is the last
+# point at which the disclosure can precede every number, and it is also the
+# earliest: the engine only says which model it loaded once it has run.
+#
+# One block, not three. panels.provenance_block merges the model's provenance,
+# the synthetic input and the missing anonymisation key, and its docstring
+# records what it refuses to merge and why.
+#
+# The coloured box carries the whole disclosure; the expander under it carries the
+# same run in more words. That split is the point: a 459-word box of red is a box
+# a judge skims, and a skimmed disclosure protects nobody. Nothing required to
+# understand that this is a demo run is behind the fold — tests/test_app.py
+# asserts that against the WARNING element alone, ignoring the expander's contents.
+_provenance = panels.provenance_block(result, input_path)
+if _provenance:
+    if _provenance["severity"] == "warning":
+        st.warning(_provenance["text"], icon="🧪")
+    else:
+        st.info(_provenance["text"], icon="🧪")
+    if _provenance["details"]:
+        with st.expander(panels.DEMO_DETAILS_LABEL):
+            st.markdown(_provenance["details"])
+_demo_run = panels.is_demo_model_run(result)
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Flows", f"{result['n_flows']:,}")
 m2.metric("Host-windows", f"{result['n_host_windows']:,}")
 m3.metric("Alerts", f"{result['n_alerts']:,}")
-m4.metric("Threshold (1% FPR)", _fmt_threshold(result["threshold"]))
+# The label carries the provenance, because the label is what a screenshot of
+# this row keeps: "Threshold (1% FPR)" on its own reads as a measured operating
+# point of the evaluated system.
+m4.metric(panels.threshold_metric_label(result), _fmt_threshold(result["threshold"]))
+if _demo_run:
+    st.caption(panels.DEMO_METRICS_MARK)
+
+# Frames the IPv4 parser skipped are stated here, before any panel below can be
+# read as a clean result: an unseen capture scores zero alerts, and zero alerts
+# with nothing said next to it is the silence this whole page exists to break.
+_coverage = panels.coverage_note(result)
+if _coverage:
+    if _coverage["severity"] == "warning":
+        st.warning(_coverage["text"], icon="🕳️")
+    else:
+        st.caption(_coverage["text"])
+
+# The other way a run can quietly see less than it appears to — no anonymisation
+# key, so the two role features are zeros — is disclosed in the provenance block
+# above rather than in a box of its own. It is the same class of fact as "which
+# model scored this", it reaches the same conclusion ("not comparable"), and
+# ROLE_FEATURES_DEGRADED_TEXT goes into that block verbatim, so nothing about the
+# mechanism or its fix is lost by moving it. The coverage note above keeps its own
+# box on purpose: it is about what the PARSER read, it has a different fix, and it
+# is the one thing stopping "0 alerts" being read as a quiet network.
 
 # ---------------------------------------------------------------- timeline
 st.header("2 · Forecast timeline")
-tl = panels.timeline_frame(result, CFG)
-if tl.empty:
-    st.info("No alerts at this operating point.")
-else:
-    fig, ax = plt.subplots(figsize=(11, 3.4))
-    t0 = tl["window_start"].min()
-    ax.plot((tl["window_start"] - t0), tl["probability"], "-o", ms=3,
-            color="#1a6faf", label="network score (max over hosts)")
-    ax.axhline(result["threshold"], ls="--", color="crimson",
-               label=f"alert threshold ({_fmt_threshold(result['threshold'])})")
-    for stage in tl["stage"].unique():
-        sub = tl[tl["stage"] == stage]
-        ax.scatter(sub["window_start"] - t0, sub["probability"], s=14, label=stage)
-    ax.set_xlabel("seconds since first alert window")
-    ax.set_ylabel("forecast probability")
-    ax.legend(fontsize=7, ncol=3)
-    ax.grid(alpha=0.3)
-    st.pyplot(fig)
+# `ranking` is built here and consumed by sections 3 AND 4, so one failure in
+# this try empties BOTH of them. Which of the two reasons emptied them —
+# this failure, or an honest zero-alert run — is recorded and said on the page:
+# an empty section under a live header reads on camera as a broken panel.
+ranking = None
+ranking_failed = False
+try:
+    tl = panels.timeline_frame(result, CFG)
+    if tl.empty:
+        st.info("No alerts at this operating point.")
+    else:
+        # Colours come from the page theme (panels.theme_colors), so the chart never
+        # renders as a white box on a dark page or invisible text on a light one.
+        fig, ax = plt.subplots(figsize=(11, 3.4), facecolor=COLORS["background"])
+        ax.set_facecolor(COLORS["background"])
+        t0 = tl["window_start"].min()
+        ax.plot((tl["window_start"] - t0), tl["probability"], "-o", ms=3,
+                color=COLORS["accent"], label="network score (max over hosts)")
+        ax.axhline(result["threshold"], ls="--", color=COLORS["alert"],
+                   label=f"alert threshold ({_fmt_threshold(result['threshold'])})")
+        for stage in tl["stage"].unique():
+            sub = tl[tl["stage"] == stage]
+            ax.scatter(sub["window_start"] - t0, sub["probability"], s=14, label=stage)
+        ax.set_xlabel("seconds since first alert window", color=COLORS["text"])
+        ax.set_ylabel("forecast probability", color=COLORS["text"])
+        # Drawn INTO the axes on a demo run, for the same reason the k-step
+        # figure carries FORECAST_FIGURE_CAVEAT: this chart leaves the page as a
+        # screenshot in a deck or a chat, and the banner at the top of the page
+        # does not travel with it. Empty string on a normal run, which
+        # matplotlib renders as no title at all.
+        ax.set_title(panels.demo_figure_mark(result), loc="left", fontsize=8,
+                     color=COLORS["alert"])
+        ax.tick_params(colors=COLORS["text"])
+        for spine in ax.spines.values():
+            spine.set_color(COLORS["muted"])
+        legend = ax.legend(fontsize=7, ncol=3, facecolor=COLORS["panel"],
+                           edgecolor=COLORS["muted"], labelcolor=COLORS["text"])
+        legend.get_frame().set_alpha(0.9)
+        ax.grid(alpha=0.3, color=COLORS["muted"])
+        st.pyplot(fig)
 
-st.subheader("Hosts to triage")
-st.dataframe(panels.host_ranking(result), width="stretch")
+    st.subheader("Hosts to triage")
+    ranking = panels.host_ranking(result)
+    st.dataframe(ranking, width="stretch")
+except Exception as exc:
+    ranking_failed = True
+    _error_card(exc)
 
 # ---------------------------------------------------------------- explain
 st.header("3 · Why this host? (named features — never embedding dimensions)")
-hosts = list(panels.host_ranking(result)["host"]) if result["forecasts"] else []
+hosts = [] if ranking is None or ranking.empty else list(ranking["host"])
 if hosts:
-    chosen = st.selectbox("Host (pseudonymised where a key is configured)", hosts)
-    exp = panels.explanation_for(result, chosen)
-    if exp:
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            st.markdown(
-                f"**Probability** {exp['probability']:.3f} · **Stage** `{exp['stage']}` · "
-                f"**Technique** `{exp['technique']}` {exp['technique_name']}"
-            )
-            st.markdown("**Top contributing features**")
-            st.dataframe(
-                [{"feature": t["feature"], "value": round(t["value"], 3),
-                  "contribution": round(t["contribution"], 4)} for t in exp["top_features"]],
-                width="stretch",
-            )
-        with c2:
-            st.markdown("**Top contributing windows** (where the attack was forming)")
-            tw = exp.get("top_windows") or []
-            st.dataframe(
-                [{"seconds_before_alert": w["seconds_before_alert"],
-                  "probability": round(w["probability"], 3)} for w in tw]
-                or [{"note": "single-window alert"}],
-                width="stretch",
-            )
-            st.markdown("**Flagged flows in this window**")
-            st.dataframe(exp["flagged_flows"] or [{"note": "no flows in window"}],
-                         width="stretch")
+    chosen = st.selectbox(panels.host_selector_label(result), hosts)
+    try:
+        exp = panels.explanation_for(result, chosen)
+        if exp:
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                st.markdown(
+                    f"**Probability** {exp['probability']:.3f} · **Stage** `{exp['stage']}` · "
+                    f"**Technique** `{exp['technique']}` {exp['technique_name']}"
+                )
+                st.markdown("**Top contributing features**")
+                st.dataframe(panels.explanation_rows(exp), width="stretch")
+                # Appended to the caption that is already here rather than added
+                # as a fourth coloured box on this page: the attribution table is
+                # misleading under a demo model in one specific way, and one
+                # sentence is what that costs.
+                st.caption(panels.EXPLANATION_VALUE_CAVEAT
+                           + (f"\n\n{panels.DEMO_EXPLANATION_MARK}" if _demo_run else ""))
+            with c2:
+                st.markdown("**Top contributing windows** (where the attack was forming)")
+                tw = exp.get("top_windows") or []
+                st.dataframe(
+                    [{"seconds_before_alert": w["seconds_before_alert"],
+                      "probability": round(w["probability"], 3)} for w in tw]
+                    or [{"note": "single-window alert"}],
+                    width="stretch",
+                )
+                st.markdown("**Flagged flows in this window**")
+                st.dataframe(exp["flagged_flows"] or [{"note": "no flows in window"}],
+                             width="stretch")
+    except Exception as exc:
+        _error_card(exc)
+else:
+    st.info(panels.RANKING_FAILED_EXPLAIN if ranking_failed else panels.NO_HOSTS_EXPLAIN)
 
 # ---------------------------------------------------------------- what-if
 st.header("4 · What-if: remove a host")
 if hosts:
-    target = st.selectbox("Ablate this host's traffic and re-run", hosts, key="whatif")
-    if st.button("Run what-if"):
-        with st.spinner("Re-running with that host removed…"):
-            wi = panels.what_if_remove_host(input_path, _session_dir(), target)
+    target = st.selectbox("Ablate this host's traffic and re-run", hosts, key="whatif_pick")
+    w1, w2 = st.columns([1, 3])
+    if w1.button("Run what-if"):
+        try:
+            with st.spinner("Re-running with that host removed…"):
+                st.session_state.whatif_result = panels.what_if_remove_host(
+                    input_path, _session_dir(), target)["after"]
+            st.session_state.whatif_host = target
+        except Exception as exc:
+            st.session_state.pop("whatif_result", None)
+            st.session_state.pop("whatif_host", None)
+            _error_card(exc)
+
+    # The result is held in session_state, not drawn inside the button branch, so
+    # it survives the next widget interaction (same contract as section 7).
+    wi = st.session_state.get("whatif_result")
+    if wi is not None:
+        removed = st.session_state.get("whatif_host", target)
+        if w2.button("Clear what-if"):
+            st.session_state.pop("whatif_result", None)
+            st.session_state.pop("whatif_host", None)
+            st.rerun()
         a, b = st.columns(2)
         a.metric("Alerts before", result["n_alerts"])
-        b.metric("Alerts after", wi["after"]["n_alerts"],
-                 delta=wi["after"]["n_alerts"] - result["n_alerts"])
+        b.metric("Alerts after", wi["n_alerts"], delta=wi["n_alerts"] - result["n_alerts"])
         st.caption(
-            f"Flows {result['n_flows']:,} → {wi['after']['n_flows']:,} after removing "
-            f"`{target}`. A large drop in alerts means that host drove the forecast."
+            f"Flows {result['n_flows']:,} → {wi['n_flows']:,} after removing "
+            f"`{removed}`. A large drop in alerts means that host drove the forecast."
         )
+else:
+    st.info(panels.RANKING_FAILED_WHATIF if ranking_failed else panels.NO_HOSTS_WHATIF)
 
 # ---------------------------------------------------------------- ledger
 st.header("5 · Audit ledger")
-status = panels.ledger_status(_session_dir())
+try:
+    status = panels.ledger_status(_session_dir())
+except Exception as exc:
+    status = {"exists": False}
+    _error_card(exc)
 if status.get("exists"):
     l1, l2, l3 = st.columns(3)
     l1.metric("Records", status["records"])
     l2.metric("Chain verifies", "yes" if status["verified"] else "NO")
     l3.metric("Anchored to checkpoint", "yes" if status["anchored"] else "no")
-    st.code(f"python -m ledger.verify_cli {_session_dir() / 'audit_chain.jsonl'}", language="bash")
+    st.code(f"{panels.LEDGER_VERIFY_CMD} {_session_dir() / 'audit_chain.jsonl'}",
+            language="bash")
 
     t1, t2 = st.columns(2)
     if t1.button("Tamper with record 0 (demo)"):
-        panels.tamper_ledger(_session_dir(), 0)
-        st.rerun()
+        try:
+            panels.tamper_ledger(_session_dir(), 0)
+            st.rerun()
+        except Exception as exc:
+            _error_card(exc)
     if t2.button("Re-verify"):
         st.rerun()
     if not status["verified"]:
-        st.error(
-            f"TAMPER DETECTED at record {status['first_bad_index']} — the hash chain "
-            "no longer validates. Re-run the pipeline to rebuild a clean chain."
-        )
+        st.error(panels.ledger_failure_text(status))
 
 # ---------------------------------------------------------------- results
 st.header("6 · Benchmark results (read from results/, never hardcoded)")
-fh = panels.forecast_horizons()
-if not fh.empty:
-    st.markdown("**Forecasting at horizon k** — the shipped M7 deliverable")
-    st.dataframe(fh, width="stretch")
-card = panels.results_card()
-if not card.empty:
-    st.markdown("**Model comparison (test split, 1% FPR budget)**")
-    st.dataframe(card, width="stretch")
-st.caption(
-    "Regenerate: `python scripts/make_ablation_table.py`. Live scoring in this app uses the "
-    "deployed fast tier (XGBoost); the **fused** row is the eval-side headline model. The RSSM "
-    "world model failed its lead-time gate and is not shipped — see docs/decisions/004."
-)
+
+# The tables are read BEFORE their caveats are rendered, because whether there are
+# any rows decides whether either caveat belongs on the page at all. On a fresh
+# clone `results/*.json` is absent, this section has nothing in it, and the two
+# warnings used to render anyway — three coloured boxes above zero results, which
+# is exactly the ratio that makes a working project read as a broken one. The
+# argument for each, and for keeping them two boxes rather than one, is in
+# panels.benchmark_caveats.
+fh = card = None
+try:
+    fh = panels.forecast_horizons()
+    card = panels.results_card()
+except Exception as exc:
+    _error_card(exc)
+
+_has_rows = ((fh is not None and not fh.empty) or (card is not None and not card.empty))
+# Not inside the try above: a failure reading results/ must not also be the thing
+# that removes this section's disclosure. It is a pure reader of one dict and one
+# boolean (argued in tests/test_app.py::UNGUARDED_PANEL_CALLS).
+for _caveat in panels.benchmark_caveats(result, _has_rows):
+    st.warning(_caveat, icon="📉" if _caveat == panels.BENCHMARK_CAVEAT else "🧪")
+
+if fh is not None and card is not None and fh.empty and card.empty:
+    # A bare header with nothing under it reads as a broken panel on camera.
+    st.info(panels.BENCHMARK_EMPTY_HINT, icon="📂")
+    st.code(panels.BENCHMARK_EMPTY_COMMANDS, language="bash")
+else:
+    if fh is not None and not fh.empty:
+        st.markdown("**Forecasting at horizon k** — the shipped M7 deliverable")
+        st.dataframe(fh, width="stretch")
+    if card is not None and not card.empty:
+        st.markdown("**Model comparison (test split, 1% FPR budget)**")
+        st.dataframe(card, width="stretch")
+    st.caption(
+        "Regenerate: `python scripts/make_ablation_table.py`. " + panels.DEPLOYED_MODEL_NOTE
+    )
 
 # ---------------------------------------------------------------- network graph
 st.header("7 · Network attack graph (3D)")
@@ -292,6 +587,9 @@ st.caption(
     "for the IP), **edges are flows**. Node colour and size grow with forecast "
     "probability; **edges leaving an alerting host glow red**. Drag to rotate, scroll "
     "to zoom."
+    # One sentence onto an existing caption, not a fifth box: the graph's numeric
+    # surface is its 0-1 colour bar, and that is the claim that needs qualifying.
+    + (f"\n\n{panels.DEMO_GRAPH_MARK}" if _demo_run else "")
 )
 _gnodes = (result.get("graph") or {}).get("nodes", [])
 if not _gnodes:
@@ -305,15 +603,20 @@ else:
         "Contain a host (what-if: ablate its traffic and re-score the network)",
         ["— none —"] + ranked_ips, key="contain_pick")
     if cc2.button("Apply containment"):
-        if pick != "— none —":
-            with st.spinner(f"Re-scoring the network without {pick}…"):
-                st.session_state.contained_result = panels.what_if_remove_host(
-                    input_path, _session_dir(), pick)["after"]
-                st.session_state.contained_host = pick
-        else:
+        try:
+            if pick != "— none —":
+                with st.spinner(f"Re-scoring the network without {pick}…"):
+                    st.session_state.contained_result = panels.what_if_remove_host(
+                        input_path, _session_dir(), pick)["after"]
+                    st.session_state.contained_host = pick
+            else:
+                st.session_state.pop("contained_result", None)
+                st.session_state.pop("contained_host", None)
+            st.rerun()
+        except Exception as exc:
             st.session_state.pop("contained_result", None)
             st.session_state.pop("contained_host", None)
-        st.rerun()
+            _error_card(exc)
 
     gresult = st.session_state.get("contained_result", result)
     contained = st.session_state.get("contained_host")
@@ -331,12 +634,104 @@ else:
             st.session_state.pop("contained_host", None)
             st.rerun()
 
-    layout = panels.network_graph_layout(gresult)
-    if layout["nodes"]:
-        st.plotly_chart(_network_figure(layout), use_container_width=True)
-        if layout["truncated"]:
-            st.caption(
-                f"Showing the {layout['shown']} highest-risk hosts of {layout['total']}."
-            )
-    else:
-        st.info("The contained network has no remaining host graph.")
+    try:
+        layout = panels.network_graph_layout(gresult)
+        if layout["nodes"]:
+            st.plotly_chart(_network_figure(layout), width="stretch")
+            if layout["truncated"]:
+                st.caption(
+                    f"Showing the {layout['shown']} highest-risk hosts of {layout['total']}."
+                )
+        else:
+            st.info("The contained network has no remaining host graph.")
+    except Exception as exc:
+        _error_card(exc)
+
+# ------------------------------------------------------------ k-step forecast
+# PS deliverable 3, the "what next" half. Sections 2-4 answer "is this host under
+# attack now"; this one answers "what does this host look like over the next k
+# windows". The caveat is rendered FIRST and unconditionally — before the
+# spinner, before any failure branch — because it is true on every path through
+# this section, including the ones where no curve is ever drawn.
+st.header("8 · k-step forecast — the next k windows (PS deliverable 3)")
+st.warning(panels.FORECAST_HEADER_CAVEAT, icon="🚧")
+# FORECAST_HEADER_CAVEAT quotes AUROC and episode figures measured on the
+# evaluated k-step heads. Under the demo model those figures sit directly above a
+# curve a different model drew, which turns the project's most carefully worded
+# caveat into an implied specification of the toy. Said here rather than folded
+# into that caveat, whose wording is pinned to docs/limitations.md.
+if _demo_run:
+    st.caption(panels.DEMO_FORECAST_MARK)
+
+# The forecaster re-runs the pipeline, so its result is cached per input exactly
+# as the nowcast is: a widget interaction must not re-run it, and must not
+# re-append to a ledger.
+_FORECAST_KEYS = ("forecast", "forecast_unavailable", "forecast_error")
+if st.session_state.get("forecast_ran_for") != str(input_path):
+    for _k in _FORECAST_KEYS:
+        st.session_state.pop(_k, None)
+    try:
+        with st.spinner("Running the k-step forecaster over the available horizons…"):
+            st.session_state.forecast = panels.run_forecast(input_path, _session_dir())
+    except panels.ForecastUnavailable as exc:
+        # Not a failure a judge can fix on this machine: the capability is absent.
+        # It gets an empty state naming what is missing, not a red error card.
+        st.session_state.forecast_unavailable = str(exc)
+    except Exception as exc:
+        # A forecaster that IS here and broke. The exception is held rather than
+        # re-raised on every rerun, so the card survives the next interaction
+        # without the expensive failing call being repeated behind it.
+        st.session_state.forecast_error = exc
+    st.session_state.forecast_ran_for = str(input_path)
+
+if st.session_state.get("forecast_unavailable"):
+    st.info(st.session_state["forecast_unavailable"], icon="🚫")
+elif st.session_state.get("forecast_error") is not None:
+    _error_card(st.session_state["forecast_error"])
+else:
+    fc = st.session_state.get("forecast") or {}
+    try:
+        empty_reason = panels.kstep_empty_reason(fc)
+        if empty_reason:
+            st.info(empty_reason, icon="📭")
+        else:
+            k_hosts = panels.kstep_hosts(fc)
+            k_pick = st.selectbox("Risk curve for host", k_hosts, key="kstep_host")
+            curve = panels.kstep_curve(fc, k_pick)
+            plottable = panels.kstep_plottable(curve)
+            if plottable.empty:
+                st.info(panels.FORECAST_NO_CURVE_TEXT, icon="📭")
+            else:
+                st.pyplot(_kstep_figure(plottable, k_pick,
+                                        panels.kstep_use_log_scale(plottable),
+                                        panels.demo_figure_mark(result)))
+                if len(plottable) < len(curve):
+                    # Said, not smoothed over: a line drawn through a horizon the
+                    # engine returned nothing for would invent the missing point.
+                    st.caption(
+                        f"{len(curve) - len(plottable)} of {len(curve)} horizons had no "
+                        "readable score or seconds-ahead and are not on the chart; they "
+                        "are in the table below with those cells empty."
+                    )
+            st.markdown(panels.FORECAST_STAGE_TABLE_HEADING)
+            st.dataframe(panels.kstep_curve_rows(curve), width="stretch")
+            st.caption(panels.FORECAST_CURVE_CAPTION)
+            # The forecaster's own statement of what it does not establish,
+            # rendered verbatim. It travels in the engine's return value for
+            # exactly this purpose, and showing it means the page tracks the
+            # engine's finding instead of reciting a constant of its own.
+            # On a demo run engine.forecast prepends the same demo notice this
+            # page already renders in full at the top, so the repeated copy is
+            # removed here and only the part a reader has not already seen is
+            # shown. Nothing is paraphrased: an exact match, or nothing.
+            engine_caveat = panels.without_repeated_demo_notice(
+                panels.kstep_engine_caveat(fc), result)
+            if engine_caveat:
+                st.caption(f"**engine.forecast states:** {engine_caveat}")
+
+        unavailable = panels.kstep_unavailable_rows(fc)
+        if unavailable:
+            st.markdown("**Horizons with no forecast** — stated, never dropped")
+            st.dataframe(unavailable, width="stretch")
+    except Exception as exc:
+        _error_card(exc)

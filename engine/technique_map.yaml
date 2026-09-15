@@ -1,7 +1,23 @@
 # Stage + observed pattern -> MITRE ATT&CK technique (M8.5).
 # Only techniques whose evidence is actually present in our data / features.
-# Reviewed against docs/stage_mapping.md. `condition` keys read named window
+# Reviewed against docs/stage_mapping.md. `when` keys read named window
 # features; the first matching rule per stage wins, else the stage default.
+#
+# Every `when` key is `<feature>_<comparison>` and the comparison must be one
+# engine/explain.py COMPARISONS implements (today: `_gt`). A typo'd suffix
+# raises at match time — it used to be skipped, which made the rule match every
+# window and promoted every alert to that technique.
+#
+# A threshold written `stage_rule:<key>` is READ from configs/data.yaml
+# `stage_rules` at match time, never copied here: those numbers also decide the
+# stage this map is looking up, so a duplicated literal would let a recalibrated
+# stage_rule produce a stage and a technique that contradict each other.
+# tests/test_engine.py::test_technique_rules_never_copy_a_shared_stage_threshold
+# DERIVES the shared keys from configs/data.yaml stage_rules (it does not list
+# them), so a rule keyed on any stage feature is checked. A literal that is
+# deliberately a different number from the stage threshold it shadows has to be
+# registered in that test's _INDEPENDENT_OF_THE_STAGE_RULE with the reason, and
+# fails the moment it becomes equal to it — at which point it is a copy.
 
 benign:
   default: null
@@ -12,13 +28,19 @@ recon:
     - when: {distinct_dst_ips_gt: 20}
       technique: T1046
       name: Network Service Discovery
-    - when: {sequential_port_ratio_gt: 0.5}
+    - when: {sequential_port_ratio_gt: stage_rule:scan_sequential_port_ratio_gt}
       technique: T1046
       name: Network Service Discovery (sequential port sweep)
 
 initial_access:
   default: T1110    # Brute Force
   rules:
+    # NOT a copy of stage_rules.initial_access_syn_gt (30): the stage fires on
+    # SYNs unmatched by ACKs, and only well above that does the volume justify
+    # naming credential guessing. Registered as independent in
+    # test_technique_rules_never_copy_a_shared_stage_threshold; if the stage
+    # threshold is ever recalibrated to 50 that test fails, because the two
+    # numbers would then be one number with two homes.
     - when: {syn_gt: 50}
       technique: T1110
       name: Brute Force (credential guessing)
@@ -29,24 +51,38 @@ lateral_movement:
   rules:
     # An internal host sweeping another internal host is discovery, not a login:
     # surface it as T1046 and reserve T1021 for the pivot-login signature.
-    - when: {distinct_dst_ports_gt: 20}
+    - when: {distinct_dst_ports_gt: stage_rule:scan_distinct_dst_ports_gt}
       technique: T1046
       name: Network Service Discovery (internal sweep)
-    - when: {sequential_port_ratio_gt: 0.5}
+    - when: {sequential_port_ratio_gt: stage_rule:scan_sequential_port_ratio_gt}
       technique: T1046
       name: Network Service Discovery (internal sequential sweep)
 
 c2:
+  # No window-feature rule produces this stage: beaconing needs inter-window
+  # periodicity, which the per-window engine does not measure. Kept for the
+  # research stage head (7 classes); _infer_stage reaches `unclassified`
+  # instead, where it used to fall through to a confident C2 claim.
   default: T1071    # Application Layer Protocol
   name: Command and Control
 
 exfiltration:
   default: T1041    # Exfiltration Over C2 Channel
   rules:
-    - when: {sent_bytes_gt: 50000}   # windowed: a bulk outbound transfer in 15 s
+    # windowed: a bulk outbound transfer in 15 s — the same threshold that chose
+    # the exfiltration stage, read from configs/data.yaml rather than repeated.
+    - when: {sent_bytes_gt: stage_rule:exfiltration_sent_bytes_gt}
       technique: T1048
       name: Exfiltration Over Alternative Protocol (large outbound transfer)
 
 impact:
   default: T1498    # Network Denial of Service
   name: Network Denial of Service
+
+# Not a kill-chain stage: the outcome when no rule in _infer_stage fired. The
+# window is still an alert (the binary model scored it above threshold) but no
+# ATT&CK technique has evidence behind it here, so none is named. Reachable by
+# a paced attack, whose per-window counts fall under every threshold.
+unclassified:
+  default: null
+  name: No stage rule matched - technique not determined

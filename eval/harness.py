@@ -5,12 +5,21 @@
 
 Trains on the train split, chooses the operating threshold from the VALIDATION
 benign host-windows at each FPR budget, and reports on the TEST split:
-F1/precision/recall at each budget, AUROC, ECE, median lead time (with IQR),
-and alerts/host-day. Writes results/<name>.json — the ablation table (M4.5) is built
-from those, never hand-typed.
+F1/precision/recall at each budget, AUROC, ECE, lead time (median, IQR and the
+literal per-episode seconds), and alerts/host-day. Writes results/<name>.json —
+the ablation table (M4.5) is built from those, never hand-typed.
+
+AUROC and F1-at-budget also carry a cluster-bootstrap interval resampled over
+(attacker-host, episode) groups, because a point estimate over 2 episodes reads
+as far more certain than it is. One `uncertainty.annotate_split(...)` call per
+split attaches them (`auroc_ci`, and `f1_ci` inside each operating point); an
+interval the bootstrap refuses is recorded as `{"unavailable": <reason>}`, never
+as a substituted bound.
 
 Anti-leakage is structural: the scaler is fit on train only (eval.dataset), the
-threshold is fit on val (not test), and lead time counts undetected episodes as 0.
+threshold is fit on val (not test), and undetected episodes are never dropped
+from the lead-time median (they contribute
+`metrics.lead_time_undetected_seconds`, 0 in the shipped config).
 """
 
 from __future__ import annotations
@@ -25,6 +34,7 @@ import numpy as np
 from configs import load_config, resolve_path, set_seed
 from eval import dataset as D
 from eval import metrics as M
+from eval import uncertainty as U
 from models import baselines
 
 
@@ -457,11 +467,17 @@ def evaluate(model_name: str, holdout_family: str | None = None,
                 "fpr": fpr, "n_alerts": tp + fp,
                 "alerts_per_host_day": M.alerts_per_host_day(tp + fp, split.n_host_windows, cfg),
                 "lead_time_median": lt.median, "lead_time_iqr": [lt.iqr_low, lt.iqr_high],
+                "per_episode_seconds": list(lt.per_episode_seconds),
                 "episodes_detected": lt.n_detected, "episodes_total": lt.n_episodes,
             }
 
     for split_name, split in evals.items():
         result[split_name]["auroc"] = M.auroc(split.y, scores[split_name])
+        # One call attaches auroc_ci here and f1_ci inside every operating point
+        # above, resampling whole (attacker-host, episode) clusters — the same
+        # line every other results writer needs (eval/uncertainty.py).
+        U.annotate_split(result[split_name], split.y, scores[split_name], split.host,
+                         split.window_start, D.attacker_episodes(cfg, split_name))
         result[split_name]["ece"] = M.expected_calibration_error(
             split.y, scores[split_name], cfg_eval["metrics"]["ece_bins"]
         ).ece

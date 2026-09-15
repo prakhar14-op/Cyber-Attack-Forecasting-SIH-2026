@@ -7,6 +7,86 @@ order.
 
 ---
 
+## 🛑 STOP-THE-PRESS — six verified defects that invalidate published claims
+
+Found by a 6-dimension adversarial audit of the eval pipeline (34 raw findings, 15 surviving
+independent refutation), then **re-verified by hand** here. These are not subagent assertions;
+every number below was reproduced directly from the cached score dumps.
+
+> **RESOLUTION STATUS — 12 September 2026.** The blanket "do not film" order this section
+> originally carried has been narrowed to what is actually still open. Four of the six defects
+> are closed in the repository; two need a regeneration run on a machine that has the dataset.
+>
+> | # | Defect | Status | Where |
+> |---|---|---|---|
+> | 1 | "best validation AUROC — selected on val, never on test" is FALSE | **closed** | `909d722` — deleted from README, `docs/architecture.md` and the PDF; `tests/test_docs_claims.py` fails the build if it returns |
+> | 2 | Lead time does not beat chance | **disclosed, row still to generate** | `909d722` — the matched-budget random baseline is stated beside every lead-time claim in README, the slides, the deck and `JUDGES.md`. The permanent ablation ROW needs `results/*.json`, so it waits on the dataset |
+> | 3 | The fusion is transductive | **disclosed, code fix open** | `909d722` — `eval/fused.py`'s docstring now carries a KNOWN DEFECT block with the causal-refit consequence (F1 0.172 → 0.053). The refit itself changes published numbers, so it must land together with a regeneration run |
+> | 4 | The 1 % FPR table is not like-for-like | **closed** | `bdb89f2` — `eval/ablation.py` prints achieved FPR per row; the 3.2× spread is quoted under the README table until the table is regenerated |
+> | 5 | The k-step target is nearly the nowcast target | **closed** | `579ab05` — the 93–96 % overlap is stated wherever the k-step result appears, including the engine's own caveat constant and the app panel |
+> | 6 | Published Spearman ρ does not reproduce | **closed** | `909d722` — corrected to 0.05 in `docs/architecture.md` and `eval/fused.py` |
+>
+> **What this means for filming.** Defects 1, 4, 5 and 6 were textual and are fixed, so the
+> documents are safe to film against. Defects 2 and 3 are *disclosed rather than repaired*: the
+> lead-time and fused-F1 numbers on screen are the ones this report criticises, and every surface
+> that shows them now says so. Film against them only while that disclosure is on screen too.
+
+| # | Defect | Verified evidence | Severity |
+|---|---|---|---|
+| 1 | **"Best validation AUROC of any row — selected on val, never on test" is FALSE** | Val AUROC: **xgb 0.806 > lstm 0.774 > fused 0.765**. Fused is **third**. | **critical** |
+| 2 | **Lead time does not beat chance** | Uniform random noise at the *same* alert budget (18,117 alerts) scores **lead 4,882–5,110 s, 2/2 episodes** over 3 trials, vs fused **4,195 s, 2/2** | **critical** |
+| 3 | **The fusion is transductive** — percentile ranks are fitted on the split they score | Causal refit (ECDF fitted on val only): F1 **0.172 → 0.053**, precision 0.268 → 0.093. AUROC is rank-invariant so **0.933 → 0.930 stands** | **critical** |
+| 4 | **The "1 % FPR budget" table is not like-for-like** | Achieved test FPR: tgn **0.373 %**, lr 0.663 %, fused 0.811 %, lstm 0.836 %, tgn_graft 0.933 %, xgb **1.194 %** — a 3.2× spread in alert budget across rows being compared on F1 | **major** |
+| 5 | **The k-step "forecast" target is nearly the nowcast target** | labels at k=1/4/8 are **95.7 % / 93.5 % / 93.1 % identical** to k=0 | **major** |
+| 6 | **Published Spearman ρ does not reproduce** | docs and `eval/fused.py:8` claim member ρ ≈ 0.11; actual test ρ = **0.050** | minor |
+
+### What each one costs us
+
+**#1 is the most damaging to credibility.** That sentence is our *stated defence against
+test-set model selection*, it appears in `README.md`, `docs/architecture.md` **and the 2-page
+PDF deliverable**, and it is false. Worse, fused has the largest val→test gap of any row
+(0.765 → 0.933), which is exactly the signature of test-set selection that the claim was meant
+to rebut. On the stated criterion (best val AUROC) the selected model would be **xgb**.
+
+**#2 means the headline lead-time result is not evidence of model skill.** The metric saturates
+at this alert budget: episodes are thousands of windows long, lead time is measured from the
+*first* alert, so any detector firing ~1 % uniformly will hit an early window of both episodes
+by chance. "2/2 episodes, ~70 min lead" is a property of the budget and episode length, not of
+the model. It is still the PS's graded metric and we still meet it — but it must be reported
+**alongside a chance baseline**, or it reads as a claim we have not earned.
+
+**#3 means the fused row's operating point is not deployable and not comparable.** Ranking each
+split against its own empirical CDF makes the val-chosen threshold land at the same *quantile*
+in test — which is why fused appeared to transfer thresholds so well. It cannot be computed
+online at time *t* (the score at 10:11 depends on windows from 15:55), and under a causal
+refit the fused F1 (0.053) drops **below the untouched XGBoost baseline (0.140)**. The F1-column
+ordering that puts fused first is an artifact of the transform. Note the AUROC headline is
+unaffected — AUROC is invariant to any monotonic per-split transform.
+
+**#5 undercuts the forecasting framing further** than the operating-point failure already did:
+predicting the label 40 s ahead is predicting a label that is the same as *now* 93 % of the
+time. Combined with the 0/2 operating point, "k-step forecasting" is not currently a
+substantiated capability at all — not even the ranking claim carries the weight we gave it,
+because the ranking target is nearly the nowcast target.
+
+### Recommended resolution
+
+*(Status of each is in the table above. 1, 4, 5 and 6 are applied; 2 and 3 need a regeneration run on a dataset machine.)*
+
+1. Delete the "best validation AUROC" sentence everywhere; replace with the honest statement:
+   fused is selected for **test-set ranking quality and error decorrelation**, and xgb is the
+   val-optimal single model. Rebuild the PDF.
+2. Add a **chance baseline row** to the results table (random scores at matched alert budget)
+   and state that lead time at this budget does not separate from it.
+3. Fix `eval/fused.py:48-50,66-67` to fit each member's ECDF on **val only** and apply it
+   pointwise, then regenerate the fused row (expect AUROC ≈ 0.930, F1 ≈ 0.05, lead ≈ 4,158 s,
+   2/2). Correct the "parameter-free, nothing fitted on val/test" prose, which is false as
+   written.
+4. Print achieved FPR per row in the table so the budget spread is visible.
+5. Correct ρ to 0.05 and the stale k=8 AUROC (0.890 → 0.842) in `docs/limitations.md`.
+
+---
+
 ## ⚠ FLAG — what the deterministic lead-time claim actually is (affects the core pitch)
 
 **Question answered here:** does episode capture now come from the current-window (nowcast)
@@ -308,12 +388,35 @@ fact improve without it.
   GRAFT causal transformer.
 
 ## Open decisions for the human
-0. **Make de-duplication the shipped evaluation unit?** The audit found the effective unit is
-   `(host, window, observing_capture)`, inflating AUROC/F1 (fused 0.933 → ~0.89, F1 0.172 →
-   ~0.04) while leaving lead time and 2/2 episodes unchanged. Both readings are defensible —
-   per-sensor alerting is what a deployed IDS at each victim would actually do — but they are
-   not the same claim, and the docs currently publish the raw-row numbers with the caveat
-   attached. Changing the unit means regenerating the table a third time.
+0. **Make de-duplication the shipped evaluation unit?** Full evidence, all models, aggregating
+   each host-window by max score (val and test treated identically, threshold refitted on the
+   de-duplicated val):
+
+   | model | AUROC raw | AUROC dedup | Δ | F1 raw | F1 dedup | lead raw | lead dedup | eps |
+   |---|---|---|---|---|---|---|---|---|
+   | **fused** | 0.933 | **0.888** | −0.045 | 0.172 | 0.040 | 4195 s | 4190 s | 2/2 → 2/2 |
+   | xgb | 0.872 | 0.777 | **−0.095** | 0.140 | 0.055 | 4208 s | 4198 s | 2/2 → 2/2 |
+   | tgn | 0.840 | 0.803 | −0.037 | 0.009 | 0.014 | 38 s | 38 s | 1/2 → 1/2 |
+   | lstm | 0.764 | 0.773 | **+0.009** | 0.015 | 0.021 | 4202 s | 4190 s | 2/2 → 2/2 |
+   | lr | 0.573 | 0.506 | −0.067 | 0.001 | 0.001 | 0 s | 0 s | 0/2 → 0/2 |
+   | tgn_graft (both) | 0.701 | 0.605 | −0.096 | 0.013 | 0.007 | 1035 s | 878 s | 2/2 → 2/2 |
+   | clamped-T2V | 0.380 | 0.358 | −0.022 | 0.014 | 0.017 | 30 s | 30 s | 1/2 → 1/2 |
+
+   Three things this settles:
+   - **The shipped choice is safe either way.** `fused` ranks #1 under both bases, so the
+     headline model selection does not depend on this decision.
+   - **Episode capture is completely unaffected** — every model keeps its exact episode count
+     (2/2, 1/2, 0/2) and its lead time to within ~10 s. The PS's graded metric is basis-independent.
+   - **XGBoost is the biggest beneficiary of the multiplicity** (−0.095, the largest drop), and
+     de-duplication *reverses* the #2/#3 order: raw reads `xgb > tgn`, de-duplicated reads
+     `tgn > xgb`. So the row multiplicity was flattering the conventional baseline specifically —
+     which slightly *softens* caveat 2 in ranking terms, though xgb still dominates at the
+     operating point (dedup F1 0.055 vs tgn's 0.014).
+
+   Both bases are defensible — per-sensor alerting is what a real IDS deployed at each victim
+   would do, and that is what the raw rows measure — but they are different claims. The docs
+   currently publish the raw-row numbers with the caveat attached. Switching means regenerating
+   the table a third time; the evidence above is complete enough to decide without re-running.
 1. **Drop `net24_bucket` from the shipped feature set?** Evidence says it would *raise* the
    graded metrics (xgb F1 0.140 → 0.392, recall 0.114 → 0.452, lead → ~86 min) and remove a
    key-artifact dependency, at the cost of 0.080 AUROC. Not done unilaterally — it retrains the

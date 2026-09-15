@@ -18,7 +18,18 @@ metrics:
   # Undetected episodes count as 0 seconds, they are never dropped.
   lead_time_undetected_seconds: 0
   ece_bins: 15
+  # Cluster bootstrap (eval/uncertainty.py). Resampling is at the
+  # (attacker-host, episode) level, never the row level: one external attacker
+  # is a source inside several victims' captures, so a single logical host-window
+  # contributes ~8.7 correlated rows against a 1.42 average, and a row-level
+  # bootstrap would divide the real variance by roughly that factor.
   bootstrap_resamples: 1000
+  bootstrap_ci_level: 0.95
+  # A quartile band over n episodes is interpolation between two adjacent order
+  # statistics unless at least two episodes fall inside each quartile, i.e. 2 per
+  # quartile over 4 quartiles. Below this, eval/ablation.py prints the literal
+  # per-episode values instead and eval/plots.py omits the band.
+  min_episodes_for_quantile_band: 8
 
 # Leave-one-attack-family-out generalisation mode (M4.6).
 holdout_families: [bot, dos, ddos, bruteforce, web, infiltration]

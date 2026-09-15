@@ -4,8 +4,8 @@
   `python -m capture.make_synthetic_demo`). It is deterministic, hand-authored traffic that
   walks the full kill chain — benign → recon scan → SSH brute force → SSH pivot
   (**lateral_movement**) → large outbound transfer (**exfiltration**) — so the offline app can
-  be demonstrated on the full packet-feature path, including the two stages no public dataset
-  contains. It is **NOT real capture data and is never used for any reported metric.**
+  be demonstrated on the full packet-feature path, including all three stages our labelled data
+  has no windows for (`recon`, `lateral_movement`, `exfiltration`). It is **NOT real capture data and is never used for any reported metric.**
 
 - The genuine M11 deliverable is a **real lab capture** (`capture/capture.sh` +
   `capture/attack_scenarios.md`, labelled by `capture/label_capture.py` with signed
