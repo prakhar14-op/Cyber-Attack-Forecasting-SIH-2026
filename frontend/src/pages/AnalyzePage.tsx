@@ -13,6 +13,7 @@ import { RunControls } from '@/features/analyze/RunControls'
 import { useAnalysisRun } from '@/hooks/useAnalysisRun'
 import { useAutoAdvance } from '@/hooks/useAutoAdvance'
 import { analysisEngine, ENGINE_IS_DEMO } from '@/services/analysisEngine'
+import type { DemoSource } from '@/types/backend'
 
 export default function AnalyzePage() {
   const navigate = useNavigate()
@@ -32,6 +33,19 @@ export default function AnalyzePage() {
     runState === 'succeeded' && Boolean(summary),
     reduceMotion ? 900 : 2400,
     openDashboard,
+  )
+
+  const handleStart = useCallback(() => {
+    run.start()
+    navigate('/dashboard?stream=live')
+  }, [run, navigate])
+
+  const handleRunSource = useCallback(
+    (source: DemoSource) => {
+      run.runSource(source)
+      navigate('/dashboard?stream=live')
+    },
+    [run, navigate],
   )
 
   return (
@@ -62,7 +76,7 @@ export default function AnalyzePage() {
             }
             disabled={run.isRunning}
             onSelect={run.selectSource}
-            onRunSource={run.runSource}
+            onRunSource={handleRunSource}
           />
 
           <RunControls
@@ -72,7 +86,7 @@ export default function AnalyzePage() {
             canRun={run.canRun}
             fprBudget={run.fprBudget}
             onBudgetChange={run.setFprBudget}
-            onStart={run.start}
+            onStart={handleStart}
             onCancel={run.cancel}
             onReset={run.reset}
           />

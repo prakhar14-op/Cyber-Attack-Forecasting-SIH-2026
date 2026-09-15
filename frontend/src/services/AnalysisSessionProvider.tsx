@@ -22,9 +22,11 @@ function readStored(): CompletedAnalysis | null {
  */
 export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<CompletedAnalysis | null>(readStored)
+  const [activeRun, setActiveRun] = useState<import('@/services/analysisSessionContext').ActiveRunInfo | null>(null)
 
   const commit = useCallback((next: CompletedAnalysis) => {
     setSession(next)
+    setActiveRun(null)
     try {
       window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))
     } catch {
@@ -34,6 +36,7 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback(() => {
     setSession(null)
+    setActiveRun(null)
     try {
       window.sessionStorage.removeItem(STORAGE_KEY)
     } catch {
@@ -42,8 +45,8 @@ export function AnalysisSessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AnalysisSessionValue>(
-    () => ({ session, commit, clear }),
-    [session, commit, clear],
+    () => ({ session, activeRun, commit, setActiveRun, clear }),
+    [session, activeRun, commit, clear],
   )
 
   return <AnalysisSessionContext.Provider value={value}>{children}</AnalysisSessionContext.Provider>

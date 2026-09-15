@@ -22,6 +22,8 @@ import type { AttackStage } from '@/types/backend'
 interface ThreatActivityChartProps {
   points: TimelinePoint[]
   threshold: number
+  autoStream?: boolean
+  onStreamChange?: (streamIndex: number, total: number, isPlaying: boolean) => void
 }
 
 interface ChartItem extends TimelinePoint {
@@ -133,7 +135,12 @@ function ThreatTooltip({ active, payload }: TooltipPayload) {
   )
 }
 
-export function ThreatActivityChart({ points, threshold }: ThreatActivityChartProps) {
+export function ThreatActivityChart({
+  points,
+  threshold,
+  autoStream = false,
+  onStreamChange,
+}: ThreatActivityChartProps) {
   const reduceMotion = useReducedMotion()
   const stagesPresent = useMemo(
     () => [...new Set(points.map((point) => point.stage))] as AttackStage[],
@@ -141,25 +148,37 @@ export function ThreatActivityChart({ points, threshold }: ThreatActivityChartPr
   )
 
   // Dynamic progressive streaming state
-  const [streamIndex, setStreamIndex] = useState<number>(() => points.length)
-  const [isPlaying, setIsPlaying] = useState<boolean>(false)
+  const [streamIndex, setStreamIndex] = useState<number>(() =>
+    autoStream && points.length > 0 ? 1 : points.length,
+  )
+  const [isPlaying, setIsPlaying] = useState<boolean>(() => Boolean(autoStream && points.length > 0))
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1)
   const [showForecastHead, setShowForecastHead] = useState<boolean>(true)
 
-  // Sync streamIndex when points change to new dataset
+  // Sync streamIndex when points change to new dataset or autoStream is requested
   const prevPointsLenRef = useRef(points.length)
   useEffect(() => {
     if (points.length !== prevPointsLenRef.current) {
       prevPointsLenRef.current = points.length
-      setStreamIndex(points.length)
-      setIsPlaying(false)
+      if (autoStream && points.length > 0) {
+        setStreamIndex(1)
+        setIsPlaying(true)
+      } else {
+        setStreamIndex(points.length)
+        setIsPlaying(false)
+      }
     }
-  }, [points])
+  }, [points, autoStream])
+
+  // Notify parent on stream index or playback change
+  useEffect(() => {
+    onStreamChange?.(streamIndex, points.length, isPlaying)
+  }, [streamIndex, points.length, isPlaying, onStreamChange])
 
   // Animation ticker for dynamic graph drawing
   useEffect(() => {
     if (!isPlaying) return
-    const intervalMs = Math.max(25, Math.floor(75 / playbackSpeed))
+    const intervalMs = Math.max(35, Math.floor(110 / playbackSpeed))
     const timer = setInterval(() => {
       setStreamIndex((prev) => {
         if (prev >= points.length) {

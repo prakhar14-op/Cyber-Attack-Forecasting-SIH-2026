@@ -39,20 +39,15 @@ export interface UseAnalysisRun {
 }
 
 export function useAnalysisRun(): UseAnalysisRun {
-  const { commit } = useAnalysisSession()
+  const { commit, setActiveRun, clear } = useAnalysisSession()
   const [input, setInput] = useState<SelectedInput | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null)
   const [fprBudget, setFprBudget] = useState<FprBudget>(0.01)
   const controller = useRef<RunController | null>(null)
 
-  useEffect(
-    () => () => {
-      controller.current?.cancel()
-      controller.current = null
-    },
-    [],
-  )
+  // Do not cancel running controller on unmount; when user clicks Run Analysis
+  // we navigate immediately to /dashboard. The run finishes in background and commits to session.
 
   const selectSource = useCallback((source: DemoSource) => {
     setValidationError(
@@ -118,8 +113,33 @@ export function useAnalysisRun(): UseAnalysisRun {
   const beginRun = useCallback(
     (target: RunTarget) => {
       controller.current?.cancel()
+      clear()
+      const inputName = target.type === 'source' ? target.source.label : target.file.name
+      setActiveRun({
+        isRunning: true,
+        inputName,
+        fprBudget,
+        stage: 'Extracting 15s windows & graph features',
+      })
       controller.current = analysisEngine.start(target, fprBudget, (next) => {
         setSnapshot(next)
+        const stageLabels: Record<string, string> = {
+          capture: 'Ingesting network telemetry',
+          features: 'Extracting 15s windows & graph features',
+          model: 'Calibrated inference & world model rollout',
+          forecast: 'Generating forward threat trajectory',
+          explanation: 'Computing TreeSHAP feature contributions',
+          ledger: 'Writing immutable cryptographic audit ledger',
+        }
+        const activeStage = next.run.stages.find((s) => s.state === 'active')
+        if (next.run.state === 'running' || next.run.state === 'queued') {
+          setActiveRun({
+            isRunning: true,
+            inputName,
+            fprBudget,
+            stage: activeStage ? (stageLabels[activeStage.id] ?? 'Running pipeline') : 'Running model pipeline',
+          })
+        }
         if (next.run.state === 'succeeded' && next.result) {
           commit({
             runId: next.run.id,
@@ -131,10 +151,13 @@ export function useAnalysisRun(): UseAnalysisRun {
             ledger: next.ledger,
             annotation: next.annotation,
           })
+          setActiveRun(null)
+        } else if (next.run.state === 'failed' || next.run.state === 'cancelled') {
+          setActiveRun(null)
         }
       })
     },
-    [commit, fprBudget],
+    [clear, commit, fprBudget, setActiveRun],
   )
 
   const start = useCallback(() => {
@@ -155,13 +178,15 @@ export function useAnalysisRun(): UseAnalysisRun {
   const cancel = useCallback(() => {
     controller.current?.cancel()
     controller.current = null
-  }, [])
+    setActiveRun(null)
+  }, [setActiveRun])
 
   const reset = useCallback(() => {
     controller.current?.cancel()
     controller.current = null
+    setActiveRun(null)
     setSnapshot(null)
-  }, [])
+  }, [setActiveRun])
 
   const canRun = useMemo(
     () => Boolean(input) && !input?.blockedReason && !isRunning,

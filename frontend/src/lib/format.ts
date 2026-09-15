@@ -19,8 +19,12 @@ export function formatBytes(bytes: number | null): string {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unit]}`
 }
 
-/** Fixed 4 decimals — thresholds and probabilities are compared by eye. */
+/** Fixed 4 decimals for standard values, or scientific notation for small FPR thresholds (< 1e-4) so they never display as 0.0000. */
 export function formatProbability(value: number): string {
+  if (value === 0) return '0.0000'
+  if (Math.abs(value) < 0.0001) {
+    return value.toExponential(2)
+  }
   return value.toFixed(4)
 }
 

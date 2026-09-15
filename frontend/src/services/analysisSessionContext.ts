@@ -16,10 +16,21 @@ export interface CompletedAnalysis {
   annotation: CaptureAnnotation | null
 }
 
+export interface ActiveRunInfo {
+  isRunning: boolean
+  inputName: string
+  fprBudget: number
+  stage?: string
+  progress?: number
+}
+
 export interface AnalysisSessionValue {
   session: CompletedAnalysis | null
+  activeRun: ActiveRunInfo | null
   commit: (next: CompletedAnalysis) => void
+  setActiveRun: (run: ActiveRunInfo | null) => void
   clear: () => void
+  cancelActiveRun?: () => void
 }
 
 export const AnalysisSessionContext = createContext<AnalysisSessionValue | null>(null)

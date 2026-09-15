@@ -7,6 +7,11 @@ interface KpiRowProps {
   result: PredictionResult
   peak: number | null
   lead: LeadEvidence
+  isStreaming?: boolean
+  streamIndex?: number
+  totalWindows?: number
+  visibleAlerts?: number
+  visiblePeak?: number | null
 }
 
 const LEAD_TITLE: Record<LeadEvidence['basis'], string> = {
@@ -21,29 +26,60 @@ const LEAD_CAPTION: Record<LeadEvidence['basis'], string> = {
   unavailable: 'not present in this result',
 }
 
-export function KpiRow({ result, peak, lead }: KpiRowProps) {
+export function KpiRow({
+  result,
+  peak,
+  lead,
+  isStreaming = false,
+  streamIndex,
+  totalWindows,
+  visibleAlerts,
+  visiblePeak,
+}: KpiRowProps) {
+  const displayAlerts = isStreaming && visibleAlerts !== undefined ? visibleAlerts : result.n_alerts
+  const displayWindows = isStreaming && streamIndex !== undefined ? streamIndex : result.n_host_windows
+  const displayPeak = isStreaming && visiblePeak !== undefined ? visiblePeak : peak
+
   return (
     <div className="dash-kpis">
       <div className="dash-kpi is-alerts">
         <span className="dash-kpi-rule rule-rose" aria-hidden="true" />
-        <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
-          Active alerts
+        <div className="wx-mono" style={{ color: 'var(--c-text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Active alerts</span>
+          {isStreaming && (
+            <span className="wx-pill wx-mono tone-warn" style={{ fontSize: 9, minHeight: 18, padding: '1px 6px' }}>
+              Scanning
+            </span>
+          )}
         </div>
         <div className="dash-kpi-value" style={{ color: 'var(--c-danger)' }}>
-          <AnimatedNumber value={result.n_alerts} format={formatInt} />
+          <AnimatedNumber value={displayAlerts} format={formatInt} />
         </div>
-        <small>host-windows at or above threshold</small>
+        <small>
+          {isStreaming
+            ? 'alerts detected in current telemetry window'
+            : 'host-windows at or above threshold'}
+        </small>
       </div>
 
       <div className="dash-kpi is-windows">
         <span className="dash-kpi-rule rule-sky" aria-hidden="true" />
-        <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
-          Host windows
+        <div className="wx-mono" style={{ color: 'var(--c-text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Host windows</span>
+          {isStreaming && totalWindows && (
+            <span className="wx-mono" style={{ fontSize: 9, color: 'var(--c-accent)' }}>
+              {Math.round(((streamIndex ?? 1) / totalWindows) * 100)}%
+            </span>
+          )}
         </div>
         <div className="dash-kpi-value">
-          <AnimatedNumber value={result.n_host_windows} format={formatInt} />
+          <AnimatedNumber value={displayWindows} format={formatInt} />
         </div>
-        <small>{formatInt(result.n_flows)} flows · 15 s window / 5 s stride</small>
+        <small>
+          {isStreaming && totalWindows
+            ? `streaming window ${streamIndex ?? 1} of ${totalWindows} (15s sliding)`
+            : `${formatInt(result.n_flows)} flows · 15 s window / 5 s stride`}
+        </small>
       </div>
 
       <div className="dash-kpi is-peak">
@@ -52,9 +88,11 @@ export function KpiRow({ result, peak, lead }: KpiRowProps) {
           Peak threat probability
         </div>
         <div className="dash-kpi-value">
-          {peak === null ? '—' : <AnimatedNumber value={peak} format={(v) => formatPercent(v, 1)} />}
+          {displayPeak === null ? '—' : <AnimatedNumber value={displayPeak} format={(v) => formatPercent(v, 1)} />}
         </div>
-        <small>highest single (host, window) forecast</small>
+        <small>
+          {isStreaming ? 'highest forecast score in active stream' : 'highest single (host, window) forecast'}
+        </small>
       </div>
 
       <div className={`dash-kpi is-lead${lead.basis === 'precursor' ? ' is-precursor' : ''}`}>
@@ -62,19 +100,41 @@ export function KpiRow({ result, peak, lead }: KpiRowProps) {
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           {LEAD_TITLE[lead.basis]}
         </div>
-        <div className="dash-kpi-value" style={{ color: lead.seconds !== null ? 'var(--c-success)' : undefined }}>
-          {lead.seconds === null ? 'n/a' : formatSeconds(lead.seconds)}
+        <div
+          className="dash-kpi-value"
+          style={{
+            color: lead.seconds !== null ? 'var(--c-success)' : undefined,
+            fontSize: isStreaming ? '1.35rem' : undefined,
+          }}
+        >
+          {isStreaming ? (
+            <span style={{ color: 'var(--c-accent)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <span className="wx-spin" style={{ display: 'inline-block' }}>⟳</span>
+              Forecasting...
+            </span>
+          ) : lead.seconds === null ? (
+            'n/a'
+          ) : (
+            formatSeconds(lead.seconds)
+          )}
         </div>
-        <small title={lead.note}>{LEAD_CAPTION[lead.basis]}</small>
+        <small title={lead.note}>
+          {isStreaming ? 'rolling forward k=1..12 steps (+60s lookahead)' : LEAD_CAPTION[lead.basis]}
+        </small>
       </div>
 
       <div className="dash-kpi is-threshold">
         <span className="dash-kpi-rule rule-amber" aria-hidden="true" />
-        <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
-          Alert threshold
+        <div className="wx-mono" style={{ color: 'var(--c-text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Alert threshold</span>
+          <span className="wx-pill wx-mono" style={{ fontSize: 9, minHeight: 18, padding: '1px 6px', color: 'var(--c-accent)' }}>
+            1.0% FPR
+          </span>
         </div>
-        <div className="dash-kpi-value">{formatProbability(result.threshold)}</div>
-        <small>from the validation split, not tuned here</small>
+        <div className="dash-kpi-value" title={`Calibrated decision threshold: ${result.threshold}`}>
+          {formatProbability(result.threshold)}
+        </div>
+        <small>calibrated decision boundary from validation split</small>
       </div>
     </div>
   )
