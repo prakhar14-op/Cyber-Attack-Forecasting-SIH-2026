@@ -75,7 +75,7 @@ export function RunControls({
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <button type="button" className="wx-btn is-primary" disabled={!canRun} onClick={onStart}>
             <Play size={15} aria-hidden="true" />
-            {isRunning ? 'Analysis running…' : 'Run Analysis'}
+            {isRunning ? 'Analysis running…' : input ? `Run Analysis: ${input.label}` : 'Run Analysis'}
           </button>
 
           {isRunning && (

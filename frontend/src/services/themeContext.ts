@@ -52,14 +52,14 @@ export const CHART_PALETTE: Record<
   }
 > = {
   light: {
-    grid: 'rgba(15,23,42,.07)',
-    tick: '#64748b',
-    axis: 'rgba(15,23,42,.25)',
+    grid: 'rgba(45,38,28,.07)',
+    tick: '#7e8594',
+    axis: 'rgba(45,38,28,.2)',
     tooltipBg: '#ffffff',
-    tooltipBorder: 'rgba(15,23,42,.12)',
-    tooltipText: '#0f172a',
+    tooltipBorder: 'rgba(45,38,28,.12)',
+    tooltipText: '#181a1d',
     accent: '#2563eb',
-    danger: '#dc2626',
+    danger: '#e11d48',
     dotStroke: '#ffffff',
   },
   dark: {

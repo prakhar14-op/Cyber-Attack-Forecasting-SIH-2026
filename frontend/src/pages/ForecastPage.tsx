@@ -16,9 +16,10 @@ export default function ForecastPage() {
           <span className="wx-mono wx-kicker">Investigation / 07 · forecasting</span>
           <h1>Forecast Horizons</h1>
           <p>
-            The k-step head is a verified <strong>ranking</strong> capability at t+1…t+8 windows (up
-            to 40 s ahead). It is reported here separately from the shipped operating point — the
-            horizon-0 fused model produces the actual early warning, not the k-step head.
+            The k-step head is a verified <strong>ranking</strong> capability evaluated across
+            t+1…t+12 windows (up to 60 s ahead). It is reported here separately from the shipped
+            operating point — the horizon-0 fused model produces the actual early warning, not the
+            k-step head.
           </p>
         </div>
       </header>

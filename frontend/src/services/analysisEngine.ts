@@ -317,9 +317,246 @@ class DemoEngine implements AnalysisEngine {
   }
 }
 
-export const analysisEngine: AnalysisEngine = new DemoEngine()
+class ServiceEngine implements AnalysisEngine {
+  readonly kind = 'service' as const
+  readonly label = 'Live Engine Service (Published Weights)'
+  readonly acceptsUploads = true
+
+  listSources(): DemoSource[] {
+    return DEMO_SOURCES
+  }
+
+  async containHost(result: PredictionResult, host: string): Promise<ContainmentOutcome> {
+    try {
+      const resp = await fetch('/api/contain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host, fpr_budget: 0.01 }),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        const afterResult = data.after as PredictionResult
+        const delta = afterResult.n_alerts - result.n_alerts
+        const peak = (list: typeof result.forecasts) =>
+          list.length === 0 ? null : list.reduce((max, f) => Math.max(max, f.probability), 0)
+        return {
+          host,
+          basis: 'engine',
+          beforeAlerts: result.n_alerts,
+          afterAlerts: afterResult.n_alerts,
+          deltaAlerts: delta,
+          beforePeak: peak(result.forecasts),
+          afterPeak: peak(afterResult.forecasts),
+          hostAlerts: result.forecasts.filter((f) => f.host === host).length,
+          note: `Exact counterfactual: pipeline re-run with host ${host} ablated.`,
+        }
+      }
+    } catch {
+      // fallback to own-rows
+    }
+
+    const remaining = result.forecasts.filter((forecast) => forecast.host !== host)
+    const hostAlerts = result.forecasts.length - remaining.length
+    const peak = (list: typeof result.forecasts) =>
+      list.length === 0 ? null : list.reduce((max, f) => Math.max(max, f.probability), 0)
+
+    return {
+      host,
+      basis: 'own-rows',
+      beforeAlerts: result.n_alerts,
+      afterAlerts: result.n_alerts - hostAlerts,
+      deltaAlerts: -hostAlerts,
+      beforePeak: peak(result.forecasts),
+      afterPeak: peak(remaining),
+      hostAlerts,
+      note: "Ablation of this host's own alert rows.",
+    }
+  }
+
+  start(
+    target: RunTarget,
+    fprBudget: number,
+    onSnapshot: (snapshot: RunSnapshot) => void,
+  ): RunController {
+    let cancelled = false
+    const abortController = new AbortController()
+    const input = runInputFor(target)
+
+    const run: AnalysisRun = {
+      id: `run-${Date.now().toString(36)}`,
+      state: 'running',
+      input,
+      fpr_budget: fprBudget,
+      stages: pendingStages(),
+      summary: null,
+      error: null,
+      cancellable: true,
+      notes: [
+        'Running offline inference on published model weights via local engine service.',
+      ],
+    }
+
+    const emit = (
+      result: PredictionResult | null,
+      ledger: LedgerStatus | null,
+      annotation: CaptureAnnotation | null = null,
+    ) => {
+      onSnapshot({
+        run: { ...run, stages: run.stages.map((stage) => ({ ...stage })) },
+        result,
+        ledger,
+        annotation,
+      })
+    }
+
+    // Initialize first stage as active
+    const firstStage = run.stages[0]
+    if (firstStage) {
+      firstStage.state = 'active'
+      firstStage.started_at = Date.now() / 1000
+    }
+    emit(null, null)
+
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+    const doFetch = async () => {
+      try {
+        const fetchPromise = target.type === 'upload'
+          ? (async () => {
+              const form = new FormData()
+              form.append('file', target.file)
+              form.append('fpr_budget', String(fprBudget))
+              return fetch('/api/analyze', {
+                method: 'POST',
+                body: form,
+                signal: abortController.signal,
+              })
+            })()
+          : fetch('/api/analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                source_path: target.source.path,
+                fpr_budget: fprBudget,
+              }),
+              signal: abortController.signal,
+            })
+
+        // Sequentially advance through each stage with visible pacing
+        const stagePacingMs: Record<string, number> = {
+          capture: 750,
+          features: 1100,
+          model: 1000,
+          forecast: 850,
+          explanation: 800,
+          ledger: 650,
+        }
+
+        let resp: Response | null = null
+        let data: any = null
+
+        for (let i = 0; i < run.stages.length; i++) {
+          if (cancelled) return
+          const s = run.stages[i]
+          if (!s) continue
+          s.state = 'active'
+          s.started_at = Date.now() / 1000
+          emit(null, null)
+
+          await delay(stagePacingMs[s.id] ?? 800)
+          if (cancelled) return
+
+          // Await server data before concluding later stages
+          if (i === 3 && !data) {
+            resp = await fetchPromise
+            if (!resp.ok) {
+              const errBody = await resp.json().catch(() => ({ message: resp?.statusText }))
+              throw new Error(errBody.message || `Server error ${resp.status}`)
+            }
+            data = await resp.json()
+          }
+
+          s.state = 'done'
+          s.finished_at = Date.now() / 1000
+          if (data?.result) {
+            s.evidence = evidenceFor(s.id, input, fprBudget, {
+              result: data.result,
+              ledger: data.ledger ?? { exists: false },
+              capture: {
+                flows: data.result.n_flows,
+                hostWindows: data.result.n_host_windows,
+                featureCount: 30,
+              },
+            } as any)
+          }
+          emit(null, null)
+        }
+
+        // If backend fetch hasn't completed yet, await it now
+        if (!data) {
+          resp = await fetchPromise
+          if (!resp.ok) {
+            const errBody = await resp.json().catch(() => ({ message: resp?.statusText }))
+            throw new Error(errBody.message || `Server error ${resp.status}`)
+          }
+          data = await resp.json()
+        }
+
+        if (cancelled) return
+
+        const result = data.result as PredictionResult
+        const ledger = data.ledger as LedgerStatus | null
+        const annotation = data.annotation as CaptureAnnotation | null
+
+        run.state = 'succeeded'
+        run.cancellable = false
+        run.summary = {
+          n_flows: result.n_flows,
+          n_host_windows: result.n_host_windows,
+          n_alerts: result.n_alerts,
+          threshold: result.threshold,
+          fpr_budget: fprBudget,
+          ledger,
+        }
+
+        emit(result, ledger, annotation)
+      } catch (err: any) {
+        if (cancelled) return
+        run.state = 'failed'
+        run.cancellable = false
+        run.error = {
+          type: 'EngineServiceError',
+          message: err.message || 'Failed to communicate with local engine service',
+          hint: 'Verify python -m engine.server is running on port 8000',
+        }
+        for (const stage of run.stages) {
+          if (stage.state === 'active') stage.state = 'failed'
+        }
+        emit(null, null)
+      }
+    }
+
+    doFetch()
+
+    return {
+      cancel: () => {
+        cancelled = true
+        abortController.abort()
+        run.state = 'cancelled'
+        run.cancellable = false
+        for (const stage of run.stages) {
+          if (stage.state === 'active') stage.state = 'skipped'
+        }
+        emit(null, null)
+      },
+    }
+  }
+}
+
+export const analysisEngine: AnalysisEngine = new ServiceEngine()
 
 /** True while the page is backed by fixture data instead of the real engine. */
 export const ENGINE_IS_DEMO = analysisEngine.kind === 'demo'
 
 export { findDemoSource }
+

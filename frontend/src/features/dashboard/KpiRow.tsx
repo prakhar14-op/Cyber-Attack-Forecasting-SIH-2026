@@ -24,19 +24,19 @@ const LEAD_CAPTION: Record<LeadEvidence['basis'], string> = {
 export function KpiRow({ result, peak, lead }: KpiRowProps) {
   return (
     <div className="dash-kpis">
-      <div className="dash-kpi">
-        <span className="dash-kpi-rule" style={{ background: 'var(--c-accent)' }} aria-hidden="true" />
+      <div className="dash-kpi is-alerts">
+        <span className="dash-kpi-rule rule-rose" aria-hidden="true" />
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           Active alerts
         </div>
-        <div className="dash-kpi-value" style={{ color: 'var(--c-accent)' }}>
+        <div className="dash-kpi-value" style={{ color: 'var(--c-danger)' }}>
           <AnimatedNumber value={result.n_alerts} format={formatInt} />
         </div>
         <small>host-windows at or above threshold</small>
       </div>
 
-      <div className="dash-kpi">
-        <span className="dash-kpi-rule" aria-hidden="true" />
+      <div className="dash-kpi is-windows">
+        <span className="dash-kpi-rule rule-sky" aria-hidden="true" />
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           Host windows
         </div>
@@ -46,8 +46,8 @@ export function KpiRow({ result, peak, lead }: KpiRowProps) {
         <small>{formatInt(result.n_flows)} flows · 15 s window / 5 s stride</small>
       </div>
 
-      <div className="dash-kpi">
-        <span className="dash-kpi-rule" aria-hidden="true" />
+      <div className="dash-kpi is-peak">
+        <span className="dash-kpi-rule rule-purple" aria-hidden="true" />
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           Peak threat probability
         </div>
@@ -57,19 +57,19 @@ export function KpiRow({ result, peak, lead }: KpiRowProps) {
         <small>highest single (host, window) forecast</small>
       </div>
 
-      <div className={`dash-kpi${lead.basis === 'precursor' ? ' is-lead' : ''}`}>
-        <span className="dash-kpi-rule" aria-hidden="true" />
+      <div className={`dash-kpi is-lead${lead.basis === 'precursor' ? ' is-precursor' : ''}`}>
+        <span className="dash-kpi-rule rule-mint" aria-hidden="true" />
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           {LEAD_TITLE[lead.basis]}
         </div>
-        <div className="dash-kpi-value">
+        <div className="dash-kpi-value" style={{ color: lead.seconds !== null ? 'var(--c-success)' : undefined }}>
           {lead.seconds === null ? 'n/a' : formatSeconds(lead.seconds)}
         </div>
         <small title={lead.note}>{LEAD_CAPTION[lead.basis]}</small>
       </div>
 
-      <div className="dash-kpi">
-        <span className="dash-kpi-rule" aria-hidden="true" />
+      <div className="dash-kpi is-threshold">
+        <span className="dash-kpi-rule rule-amber" aria-hidden="true" />
         <div className="wx-mono" style={{ color: 'var(--c-text-muted)' }}>
           Alert threshold
         </div>

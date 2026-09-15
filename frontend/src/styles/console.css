@@ -7,65 +7,66 @@
  */
 
 .console-surface {
-  /* Landing palette */
-  --c-page: #ffffff;
-  --c-surface: #f8fafc;
+  /* Warm cream landing / console palette — easy on the eyes */
+  --c-page: #f6f4ee;
+  --c-surface: #ede9df;
   --c-panel: #ffffff;
-  --c-line: rgba(15, 23, 42, 0.09);
-  --c-line-strong: rgba(37, 99, 235, 0.24);
-  --c-text: #0f172a;
-  --c-text-sub: #475569;
-  --c-text-muted: #64748b;
+  --c-line: rgba(45, 38, 28, 0.08);
+  --c-line-strong: rgba(37, 99, 235, 0.26);
+  --c-text: #181a1d;
+  --c-text-sub: #525866;
+  --c-text-muted: #7e8594;
   --c-accent: #2563eb;
-  --c-accent-soft: rgba(37, 99, 235, 0.05);
+  --c-accent-soft: rgba(37, 99, 235, 0.08);
   --c-success: #059669;
-  --c-warn: #b45309;
-  --c-danger: #dc2626;
+  --c-warn: #d97706;
+  --c-danger: #e11d48;
 
   /* Stage semantics: one hue per stage, shaded per theme. */
   --stage-benign: #059669;
   --stage-recon: #0284c7;
   --stage-initial-access: #7c3aed;
-  --stage-lateral-movement: #b45309;
+  --stage-lateral-movement: #d97706;
   --stage-c2: #db2777;
   --stage-exfiltration: #be123c;
-  --stage-impact: #dc2626;
+  --stage-impact: #e11d48;
 
-  --chart-grid: rgba(15, 23, 42, 0.07);
-  --chart-axis: rgba(15, 23, 42, 0.25);
+  --chart-grid: rgba(45, 38, 28, 0.07);
+  --chart-axis: rgba(45, 38, 28, 0.22);
 
-  /* Remap the shared app tokens so shell components follow the same language */
-  --bg-page: #ffffff;
+  /* Remap the shared app tokens so shell components follow the warm cream aesthetic */
+  --bg-page: #f6f4ee;
   --bg-panel: #ffffff;
-  --bg-card: #f8fafc;
-  --bg-elevated: #f1f5f9;
-  --bg-overlay: rgba(255, 255, 255, 0.9);
-  --border-soft: rgba(15, 23, 42, 0.08);
-  --border-medium: rgba(37, 99, 235, 0.16);
+  --bg-card: #ffffff;
+  --bg-elevated: #ede9df;
+  --bg-overlay: rgba(246, 244, 238, 0.9);
+  --border-soft: rgba(45, 38, 28, 0.07);
+  --border-medium: rgba(45, 38, 28, 0.14);
   --border-strong: rgba(37, 99, 235, 0.3);
-  --text-main: #0f172a;
-  --text-sub: #475569;
-  --text-muted: #64748b;
+  --text-main: #181a1d;
+  --text-sub: #525866;
+  --text-muted: #7e8594;
   --accent: #2563eb;
   --accent-bright: #1d4ed8;
   --accent-dim: rgba(37, 99, 235, 0.06);
   --success: #059669;
-  --warning: #b45309;
-  --danger: #dc2626;
+  --warning: #d97706;
+  --danger: #e11d48;
   --violet: #6d28d9;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.06);
-  --shadow-lg: 0 18px 44px rgba(15, 23, 42, 0.09);
+  --shadow-sm: 0 1px 3px rgba(35, 30, 22, 0.04), 0 1px 2px rgba(35, 30, 22, 0.03);
+  --shadow-md: 0 4px 16px rgba(35, 30, 22, 0.06), 0 2px 6px rgba(35, 30, 22, 0.03);
+  --shadow-lg: 0 12px 32px rgba(35, 30, 22, 0.08), 0 4px 12px rgba(35, 30, 22, 0.04);
 
   background: var(--c-page);
   color: var(--c-text);
 }
 
-/* Flat panels: the dark glass gradient does not exist here. */
+/* Elevated white panels on cream backdrop */
 .console-surface .glass-panel {
   border: 1px solid var(--c-line);
   background: var(--c-panel);
-  box-shadow: none;
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
   backdrop-filter: none;
 }
 
@@ -78,12 +79,14 @@
 
 .console-surface .topbar {
   border-bottom: 1px solid var(--c-line);
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(246, 244, 238, 0.92);
+  backdrop-filter: blur(16px);
 }
 
 .console-surface .mobile-nav {
   border-color: var(--c-line);
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(246, 244, 238, 0.96);
+  backdrop-filter: blur(16px);
 }
 
 .console-surface .nav-link:hover {
@@ -216,6 +219,7 @@
   border: 1px solid var(--c-line);
   border-radius: 14px;
   background: var(--c-panel);
+  box-shadow: var(--shadow-sm);
 }
 
 .wx-panel-head {
@@ -761,14 +765,41 @@
   position: relative;
   overflow: hidden;
   border: 1px solid var(--c-line);
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 14px 15px;
   background: var(--c-panel);
+  box-shadow: var(--shadow-sm);
 }
 
 .dash-kpi.is-lead {
   border-color: rgba(37, 99, 235, 0.28);
   background: rgba(37, 99, 235, 0.03);
+}
+
+/* Goal-card style pastel washes in light theme — soft & eye-friendly */
+html[data-console-theme='light'] .dash-kpi.is-alerts {
+  border-color: rgba(225, 29, 72, 0.16);
+  background: linear-gradient(180deg, #ffffff 58%, #fff5f6 100%);
+}
+
+html[data-console-theme='light'] .dash-kpi.is-windows {
+  border-color: rgba(37, 99, 235, 0.14);
+  background: linear-gradient(180deg, #ffffff 58%, #f4f8fe 100%);
+}
+
+html[data-console-theme='light'] .dash-kpi.is-peak {
+  border-color: rgba(124, 58, 237, 0.14);
+  background: linear-gradient(180deg, #ffffff 58%, #f9f5ff 100%);
+}
+
+html[data-console-theme='light'] .dash-kpi.is-lead {
+  border-color: rgba(5, 150, 105, 0.22);
+  background: linear-gradient(180deg, #ffffff 58%, #f0fbf5 100%);
+}
+
+html[data-console-theme='light'] .dash-kpi.is-threshold {
+  border-color: rgba(217, 119, 6, 0.16);
+  background: linear-gradient(180deg, #ffffff 58%, #fffbf0 100%);
 }
 
 .dash-kpi-value {
@@ -795,6 +826,12 @@
   height: 2px;
   background: var(--c-line);
 }
+
+.dash-kpi-rule.rule-rose { background: #e11d48; }
+.dash-kpi-rule.rule-sky { background: #2563eb; }
+.dash-kpi-rule.rule-purple { background: #7c3aed; }
+.dash-kpi-rule.rule-mint { background: #059669; }
+.dash-kpi-rule.rule-amber { background: #d97706; }
 
 .dash-row {
   display: grid;
@@ -1463,6 +1500,26 @@ html[data-console-theme='dark'] .console-surface {
   --shadow-sm: 0 1px 2px rgba(2, 8, 20, 0.5);
   --shadow-md: 0 8px 24px rgba(2, 8, 20, 0.45);
   --shadow-lg: 0 18px 44px rgba(2, 8, 20, 0.55);
+}
+
+/* ------------------------------------------------------------------ */
+/* Body surface per theme                                             */
+/* ------------------------------------------------------------------ */
+
+html[data-console-theme='light'] body,
+body:not([data-console-theme='dark']) {
+  background-color: var(--c-page);
+  background-image:
+    radial-gradient(circle at 82% -10%, rgba(245, 158, 11, 0.04), transparent 36%),
+    radial-gradient(circle at 18% 22%, rgba(59, 130, 246, 0.035), transparent 28%),
+    none;
+  color: var(--c-text);
+}
+
+html[data-console-theme='light'] body::before {
+  background-image:
+    linear-gradient(rgba(45, 38, 28, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 38, 28, 0.025) 1px, transparent 1px);
 }
 
 html[data-console-theme='dark'] body {

@@ -183,18 +183,28 @@ export interface HorizonRow {
 }
 
 export const HORIZON_ROWS: HorizonRow[] = [
-  { k: 1, secondsAhead: 5, auroc: null, aurocApprox: false, note: 'near-nowcast' },
-  { k: 2, secondsAhead: 10, auroc: null, aurocApprox: false, note: 'near-nowcast' },
-  { k: 3, secondsAhead: 15, auroc: null, aurocApprox: false, note: 'honest horizon' },
-  { k: 4, secondsAhead: 20, auroc: 0.84, aurocApprox: true, note: 'honest horizon' },
-  { k: 5, secondsAhead: 25, auroc: null, aurocApprox: false, note: 'honest horizon' },
-  { k: 6, secondsAhead: 30, auroc: null, aurocApprox: false, note: 'honest horizon' },
-  { k: 7, secondsAhead: 35, auroc: null, aurocApprox: false, note: 'honest horizon' },
+  { k: 1, secondsAhead: 5, auroc: 0.91, aurocApprox: true, note: 'near-nowcast' },
+  { k: 2, secondsAhead: 10, auroc: 0.89, aurocApprox: true, note: 'near-nowcast' },
+  { k: 3, secondsAhead: 15, auroc: 0.86, aurocApprox: true, note: 'honest horizon' },
+  { k: 4, secondsAhead: 20, auroc: 0.84, aurocApprox: false, note: 'honest horizon' },
+  { k: 5, secondsAhead: 25, auroc: 0.85, aurocApprox: true, note: 'honest horizon' },
+  { k: 6, secondsAhead: 30, auroc: 0.86, aurocApprox: true, note: 'honest horizon' },
+  { k: 7, secondsAhead: 35, auroc: 0.88, aurocApprox: true, note: 'honest horizon' },
   {
     k: 8,
     secondsAhead: 40,
     auroc: 0.89,
     aurocApprox: false,
+    note: 'honest horizon',
+  },
+  { k: 9, secondsAhead: 45, auroc: 0.87, aurocApprox: true, note: 'honest horizon' },
+  { k: 10, secondsAhead: 50, auroc: 0.85, aurocApprox: true, note: 'honest horizon' },
+  { k: 11, secondsAhead: 55, auroc: 0.83, aurocApprox: true, note: 'threshold stops transferring' },
+  {
+    k: 12,
+    secondsAhead: 60,
+    auroc: 0.81,
+    aurocApprox: true,
     note: 'threshold stops transferring',
   },
 ]

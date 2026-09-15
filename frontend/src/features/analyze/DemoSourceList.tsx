@@ -33,28 +33,43 @@ export function DemoSourceList({
           const Icon = source.kind === 'csv' ? FileSpreadsheet : PackageOpen
           return (
             <div key={source.id} style={{ display: 'grid', gap: 8 }}>
-              <button
-                type="button"
+              <div
                 className={`wx-row${selected ? ' is-selected' : ''}`}
-                disabled={disabled || !source.available}
-                aria-pressed={selected}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                 onClick={() => onSelect(source)}
               >
-                <span className="wx-row-icon" aria-hidden="true">
-                  <Icon size={16} strokeWidth={1.8} />
-                </span>
-                <span>
-                  <strong>{source.label}</strong>
-                  <small>{source.detail}</small>
-                  <small className="wx-mono" style={{ marginTop: 6 }}>
-                    {source.path} · {formatBytes(source.bytes)} ·{' '}
-                    {source.engine_variant === 'full' ? 'full features' : 'flow-only'}
-                  </small>
-                </span>
-                <span className="wx-mono" style={{ color: selected ? 'var(--c-accent)' : 'var(--c-text-muted)' }}>
-                  {selected ? <Check size={15} aria-hidden="true" /> : source.kind.toUpperCase()}
-                </span>
-              </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                  <span className="wx-row-icon" aria-hidden="true">
+                    <Icon size={16} strokeWidth={1.8} />
+                  </span>
+                  <span>
+                    <strong style={{ display: 'block' }}>{source.label}</strong>
+                    <small>{source.detail}</small>
+                    <small className="wx-mono" style={{ display: 'block', marginTop: 4 }}>
+                      {source.path} · {formatBytes(source.bytes)} ·{' '}
+                      {source.engine_variant === 'full' ? 'full features' : 'flow-only'}
+                    </small>
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="wx-mono" style={{ color: selected ? 'var(--c-accent)' : 'var(--c-text-muted)' }}>
+                    {selected ? <Check size={15} aria-hidden="true" /> : source.kind.toUpperCase()}
+                  </span>
+                  <button
+                    type="button"
+                    className="wx-btn wx-mono is-primary"
+                    disabled={disabled || !source.available}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRunSource(source)
+                    }}
+                    style={{ padding: '6px 12px', fontSize: 12 }}
+                    title={`Run analysis on ${source.label}`}
+                  >
+                    <Play size={12} aria-hidden="true" /> Run
+                  </button>
+                </div>
+              </div>
               {!source.available && source.build_hint && (
                 <p className="wx-mono" style={{ margin: 0, color: 'var(--c-text-muted)' }}>
                   Not in this checkout — build with <code>{source.build_hint}</code>
@@ -64,20 +79,20 @@ export function DemoSourceList({
           )
         })}
 
-        {sources.some((source) => source.available) && (
-          <button
-            type="button"
-            className="wx-btn"
-            disabled={disabled}
-            onClick={() => {
-              const first = sources.find((source) => source.available)
-              if (first) onRunSource(first)
-            }}
-            style={{ justifySelf: 'start', marginTop: 2 }}
-          >
-            <Play size={14} aria-hidden="true" /> Run demo capture
-          </button>
-        )}
+        {sources.some((source) => source.available) && (() => {
+          const targetSource = sources.find((s) => s.path === selectedPath && s.available) || sources.find((s) => s.available)
+          return targetSource ? (
+            <button
+              type="button"
+              className="wx-btn is-primary"
+              disabled={disabled}
+              onClick={() => onRunSource(targetSource)}
+              style={{ justifySelf: 'start', marginTop: 6 }}
+            >
+              <Play size={14} aria-hidden="true" /> Run analysis: {targetSource.label}
+            </button>
+          ) : null
+        })()}
       </div>
     </section>
   )
