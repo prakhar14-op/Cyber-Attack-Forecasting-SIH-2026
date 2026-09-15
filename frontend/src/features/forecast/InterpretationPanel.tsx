@@ -30,7 +30,7 @@ export function InterpretationPanel() {
             <dd style={{ textAlign: 'left' }}>
               {WINDOW_SECONDS} s windows overlap on a {STRIDE_SECONDS} s stride, so window t and t+3
               are the first fully disjoint pair. k=1 and k=2 are near-nowcasts; k=4 and k=8 are the
-              honest forecasting horizons. 20 s ahead is the supported horizon; at 40 s the ranking
+              honest forecasting horizons. 20 s ahead is the evaluated k=4 horizon; at 40 s the ranking
               holds but the val-fitted threshold stops transferring and episode detection drops to
               0/2.
             </dd>

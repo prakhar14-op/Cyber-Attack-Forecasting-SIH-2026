@@ -139,7 +139,7 @@ export function HorizonAurocChart() {
         </div>
 
         <p className="wx-stage-note" style={{ marginTop: 6 }}>
-          Only the two published points (k=4 ≈ 0.84 at 20 s, k=8 = 0.890 at 40 s) are drawn. The
+          Only the two published points (k=4 ≈ 0.84 at 20 s, k=8 = 0.842 at 40 s) are drawn. The
           remaining horizon ticks carry no marker — the values are not published in this checkout,
           so no line is interpolated between them.
         </p>

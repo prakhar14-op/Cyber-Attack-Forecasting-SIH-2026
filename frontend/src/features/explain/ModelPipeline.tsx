@@ -30,7 +30,7 @@ const NODES: PipelineNode[] = [
   {
     label: 'Engine scoring',
     modules: ['engine/predict.py', 'artifacts/engine_model*.json'],
-    detail: 'XGBoost fast tier scores each host-window.',
+    detail: 'XGBoost model scores each host-window.',
   },
   {
     label: 'FPR-budget threshold',
@@ -132,7 +132,7 @@ export function ModelPipeline() {
         </ol>
 
         <p className="wx-stage-note" style={{ marginTop: 12 }}>
-          The deployed app scores with the XGBoost fast tier (CPU-cheap, natively
+          The deployed app scores with the XGBoost engine model (CPU-cheap, natively
           TreeSHAP-explainable). Every stage above is a real module in the Python backend; the
           frontend renders their output and adds no ML logic.
         </p>

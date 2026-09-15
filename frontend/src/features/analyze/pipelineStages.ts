@@ -35,7 +35,7 @@ export const PIPELINE_STAGES: PipelineStageSpec[] = [
     id: 'model',
     index: '03',
     label: 'TEMPORAL MODEL',
-    note: 'Host-window scoring on the engine fast tier · TGN encoder stays eval-side',
+    note: 'Host-window scoring on the deployed engine model · TGN encoder stays eval-side',
     module: 'engine/predict.py · artifacts/engine_model*.json',
     icon: Waypoints,
   },

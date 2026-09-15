@@ -502,7 +502,7 @@ function csvFixture(fprBudget: number): DemoRunFixture {
       n_flows: 1000,
       n_host_windows: 96,
       n_alerts: forecasts.length,
-      threshold: fprBudget === 0.001 ? 0.8902 : 0.7413,
+      threshold: fprBudget === 0.001 ? 0.8842 : 0.7413,
       forecasts,
       graph: buildGraph(forecasts, edges, internalByHost),
     },

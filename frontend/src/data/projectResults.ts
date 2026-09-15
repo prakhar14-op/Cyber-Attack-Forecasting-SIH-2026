@@ -160,7 +160,7 @@ export const BENCHMARK_ROWS: BenchmarkRow[] = [
 /* Source: README.md (M7 forecast row), docs/limitations.md.          */
 /* Window 15 s, stride 5 s ⇒ k windows ahead = 5·k seconds ahead.     */
 /* Published per-horizon test AUROC in this checkout: k=4 ≈ 0.84,     */
-/* k=8 = 0.890. NOTHING is published for k=1,2,3,5,6,7 in this        */
+/* k=8 = 0.842. NOTHING is published for k=1,2,3,5,6,7 in this        */
 /* checkout (results/forecast.json is gitignored) ⇒ auroc: null.      */
 /* ------------------------------------------------------------------ */
 
