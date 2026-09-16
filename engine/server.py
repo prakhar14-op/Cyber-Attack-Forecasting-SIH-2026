@@ -364,8 +364,18 @@ async def handle_contain(request: web.Request) -> web.Response:
     return web.json_response(whatif_out)
 
 
+async def handle_root(request: web.Request) -> web.Response:
+    return web.json_response({
+        "service": "Cyber Attack Forecasting Engine API",
+        "status": "online",
+        "version": "SIH-2026",
+        "endpoints": ["/api/health", "/api/sources", "/api/analyze", "/api/contain"],
+    })
+
+
 def create_app() -> web.Application:
     app = web.Application(middlewares=[cors_middleware], client_max_size=500 * 1024 * 1024)
+    app.router.add_get("/", handle_root)
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/sources", handle_sources)
     app.router.add_post("/api/analyze", handle_analyze)
