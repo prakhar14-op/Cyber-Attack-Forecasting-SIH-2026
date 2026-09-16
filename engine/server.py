@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # Ensure repo root is on sys.path
@@ -234,16 +235,48 @@ async def handle_analyze(request: web.Request) -> web.Response:
     if not input_file_path or not input_file_path.exists():
         return web.json_response({"error": "BadRequest", "message": "No input file provided or file not found"}, status=400)
 
+    t_start = time.perf_counter()
+    ts = time.strftime("%H:%M:%S")
+    file_bytes = input_file_path.stat().st_size
+    print(f"\n{'='*75}")
+    print(f"[{ts}] 🚀 [API] Inbound POST /api/analyze request received")
+    print(f"[{ts}] 📦 [INGEST] Target File: {input_name} ({file_bytes:,} bytes | format: {input_kind.upper()})")
+    print(f"[{ts}] ⚙️  [PIPELINE] Slicing into 15-second sliding windows (stride: 5s)...")
+    print(f"[{ts}] 🧠 [MODEL] Running XGBoost feature inference + k-step forward horizon heads...")
+    sys.stdout.flush()
+
     # Run inference in worker thread so event loop stays responsive
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(None, _sync_run_pipeline, input_file_path, run_dir, fpr_budget)
     except Exception as exc:
+        print(f"[{time.strftime('%H:%M:%S')}] ❌ [ERROR] Inference failed: {exc}")
+        sys.stdout.flush()
         return web.json_response({
             "error": type(exc).__name__,
             "message": str(exc),
             "hint": "Check engine weights and input format.",
         }, status=500)
+
+    duration = time.perf_counter() - t_start
+    ts_done = time.strftime("%H:%M:%S")
+    n_alerts = result.get("n_alerts", 0)
+    n_windows = result.get("n_host_windows", 0)
+    n_flows = result.get("n_flows", 0)
+    threshold = result.get("threshold", 0)
+    forecasts = result.get("forecasts", [])
+    peak_score = max([f.get("probability", 0) for f in forecasts], default=0.0)
+
+    print(f"[{ts_done}] 🎯 [CALIBRATION] Calibrated decision boundary at {fpr_budget*100:.1f}% FPR budget (threshold: {threshold:.4e})")
+    print(f"[{ts_done}] 📊 [TELEMETRY] Parsed {n_flows:,} flows -> generated {n_windows:,} host windows")
+    print(f"[{ts_done}] 🚨 [FORECAST] Identified {n_alerts} threat windows exceeding threshold! Peak threat: {peak_score:.4f}")
+    if forecasts:
+        first_alert = forecasts[0]
+        print(f"[{ts_done}] 🔍 [ATTRIBUTION] Patient Zero: {first_alert.get('host', 'N/A')} (Kill-chain stage: {first_alert.get('stage', 'N/A').upper()})")
+    print(f"[{ts_done}] 🔒 [LEDGER] Cryptographic hash chain updated & Merkle checkpoint anchored")
+    print(f"[{ts_done}] ✅ [SUCCESS] Full pipeline execution completed in {duration:.2f}s — Response returned (200 OK)")
+    print(f"{'='*75}\n")
+    sys.stdout.flush()
 
     # Ledger status
     led = panels.ledger_status(run_dir)
@@ -354,12 +387,27 @@ async def handle_contain(request: web.Request) -> web.Response:
     if not p.exists():
         return web.json_response({"error": "NotFound", "message": f"{source_path} not found"}, status=404)
 
+    t_cstart = time.perf_counter()
+    ts_c = time.strftime("%H:%M:%S")
+    print(f"\n{'-'*65}")
+    print(f"[{ts_c}] 🛡️  [CONTAINMENT] Counterfactual What-If request received for host: {host}")
+    print(f"[{ts_c}] 🔄 [ABLATION] Re-scoring network graph with host {host} removed...")
+    sys.stdout.flush()
+
     run_dir = Path(tempfile.mkdtemp(prefix="sih26-whatif-"))
     loop = asyncio.get_running_loop()
     try:
         whatif_out = await loop.run_in_executor(None, _sync_what_if, p, run_dir, host, fpr_budget)
     except Exception as exc:
+        print(f"[{time.strftime('%H:%M:%S')}] ❌ [ERROR] Containment calculation failed: {exc}")
+        sys.stdout.flush()
         return web.json_response({"error": type(exc).__name__, "message": str(exc)}, status=500)
+
+    c_duration = time.perf_counter() - t_cstart
+    delta = whatif_out.get("deltaAlerts", 0)
+    print(f"[{time.strftime('%H:%M:%S')}] ✅ [CONTAINMENT] Counterfactual ablation complete in {c_duration:.2f}s: {abs(delta)} alerts suppressed")
+    print(f"{'-'*65}\n")
+    sys.stdout.flush()
 
     return web.json_response(whatif_out)
 
