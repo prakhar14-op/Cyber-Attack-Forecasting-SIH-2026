@@ -374,9 +374,11 @@ def create_app() -> web.Application:
 
 
 def main():
+    default_host = os.environ.get("HOST", "0.0.0.0")
+    default_port = int(os.environ.get("PORT", "8000"))
     parser = argparse.ArgumentParser(description="SIH26 Network Forecasting Engine API Server")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    parser.add_argument("--host", default=default_host, help=f"Bind host (default: {default_host})")
+    parser.add_argument("--port", type=int, default=default_port, help=f"Bind port (default: {default_port})")
     args = parser.parse_args()
 
     print(f"Starting SIH26 Engine API Server on http://{args.host}:{args.port}")

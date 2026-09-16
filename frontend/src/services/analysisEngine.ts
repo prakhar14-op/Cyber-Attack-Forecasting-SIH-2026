@@ -317,6 +317,8 @@ class DemoEngine implements AnalysisEngine {
   }
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
+
 class ServiceEngine implements AnalysisEngine {
   readonly kind = 'service' as const
   readonly label = 'Live Engine Service (Published Weights)'
@@ -328,7 +330,7 @@ class ServiceEngine implements AnalysisEngine {
 
   async containHost(result: PredictionResult, host: string): Promise<ContainmentOutcome> {
     try {
-      const resp = await fetch('/api/contain', {
+      const resp = await fetch(`${API_BASE}/api/contain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ host, fpr_budget: 0.01 }),
@@ -426,13 +428,13 @@ class ServiceEngine implements AnalysisEngine {
               const form = new FormData()
               form.append('file', target.file)
               form.append('fpr_budget', String(fprBudget))
-              return fetch('/api/analyze', {
+              return fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 body: form,
                 signal: abortController.signal,
               })
             })()
-          : fetch('/api/analyze', {
+          : fetch(`${API_BASE}/api/analyze`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
