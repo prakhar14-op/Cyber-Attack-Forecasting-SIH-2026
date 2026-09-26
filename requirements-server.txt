@@ -1,0 +1,16 @@
+# Lightweight dependencies required strictly for the SIH26 Engine Server and Inference
+# (Excludes heavy training/research frameworks like PyTorch, Captum, and Streamlit
+# to allow lightning-fast builds (<1 min) and low-memory cloud execution (<120MB RAM))
+
+aiohttp>=3.9.0
+xgboost>=2.0.0
+scapy>=2.5.0
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+scipy>=1.11.0
+jsonschema>=4.20.0
+PyYAML>=6.0
+xxhash>=3.4.0
+colorama>=0.4.6
+termcolor>=3.3.0
